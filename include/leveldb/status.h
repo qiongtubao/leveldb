@@ -37,6 +37,7 @@ class LEVELDB_EXPORT Status {
   static Status OK() { return Status(); }
 
   // Return error status of an appropriate type.
+  //创建5种类型的状态方法
   static Status NotFound(const Slice& msg, const Slice& msg2 = Slice()) {
     return Status(kNotFound, msg, msg2);
   }
@@ -53,6 +54,8 @@ class LEVELDB_EXPORT Status {
     return Status(kIOError, msg, msg2);
   }
 
+
+  //判断状态的方法
   // Returns true iff the status indicates success.
   bool ok() const { return (state_ == nullptr); }
 
@@ -73,18 +76,20 @@ class LEVELDB_EXPORT Status {
 
   // Return a string representation of this status suitable for printing.
   // Returns the string "OK" for success.
+  //转换成string
   std::string ToString() const;
 
  private:
   enum Code {
-    kOk = 0,
-    kNotFound = 1,
-    kCorruption = 2,
-    kNotSupported = 3,
-    kInvalidArgument = 4,
-    kIOError = 5
+    kOk = 0, //操作正常
+    kNotFound = 1, //没找到相关项
+    kCorruption = 2, //异常崩溃
+    kNotSupported = 3, //不支持
+    kInvalidArgument = 4, //非法参数
+    kIOError = 5 //I/O操作错误
   };
 
+  //如果是null  code就是OK，否则获取state_第4位 保存的是code
   Code code() const {
     return (state_ == nullptr) ? kOk : static_cast<Code>(state_[4]);
   }
@@ -97,6 +102,8 @@ class LEVELDB_EXPORT Status {
   //    state_[0..3] == length of message
   //    state_[4]    == code
   //    state_[5..]  == message
+  //如果状态为OK时, state_为NULL
+  //否则 state为一个char数组， 0..3 是message的长度(uint32_t)，4是code  5..是具体内容
   const char* state_;
 };
 

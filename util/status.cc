@@ -18,12 +18,15 @@ const char* Status::CopyState(const char* state) {
   return result;
 }
 
+//msg2为空                    {msg长度}{code}{msg}
+//如果msg2为不为空的话内容就是   {msg长度+2+msg2长度}{code}{msg}: {msg2}
 Status::Status(Code code, const Slice& msg, const Slice& msg2) {
   assert(code != kOk);
   const uint32_t len1 = static_cast<uint32_t>(msg.size());
   const uint32_t len2 = static_cast<uint32_t>(msg2.size());
   const uint32_t size = len1 + (len2 ? (2 + len2) : 0);
   char* result = new char[size + 5];
+  //前4位存放长度 将指针二进制内容直接存放进去
   std::memcpy(result, &size, sizeof(size));
   result[4] = static_cast<char>(code);
   std::memcpy(result + 5, msg.data(), len1);
@@ -35,6 +38,9 @@ Status::Status(Code code, const Slice& msg, const Slice& msg2) {
   state_ = result;
 }
 
+//转换成字符串
+//如果正常就是OK
+//否则  状态字符串 {code-message}: {message}
 std::string Status::ToString() const {
   if (state_ == nullptr) {
     return "OK";
@@ -68,7 +74,11 @@ std::string Status::ToString() const {
     }
     std::string result(type);
     uint32_t length;
+    //读取message 长度 （前3位） sizeof(uint32_t) 一定是4 
+    // uint32_t 是一种无符号整数类型，它是标准C99中定义的固定宽度整数类型之一，明确表示该类型占据32位，即4字节
+    //和前的面存入的时候存放2进制相对应  std::memcpy(result, &size, sizeof(size));
     std::memcpy(&length, state_, sizeof(length));
+    //字符串追加
     result.append(state_ + 5, length);
     return result;
   }
