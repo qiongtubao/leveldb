@@ -20,7 +20,7 @@
 #include "leveldb/status.h"
 
 namespace leveldb {
-
+//迭代器遍历
 class LEVELDB_EXPORT Iterator {
  public:
   Iterator();
@@ -32,41 +32,49 @@ class LEVELDB_EXPORT Iterator {
 
   // An iterator is either positioned at a key/value pair, or
   // not valid.  This method returns true iff the iterator is valid.
+  //判断迭代器是否指向一个数据 或非法
   virtual bool Valid() const = 0;
 
   // Position at the first key in the source.  The iterator is Valid()
   // after this call iff the source is not empty.
+  //将迭代器指向集合中的第一个元素
   virtual void SeekToFirst() = 0;
 
   // Position at the last key in the source.  The iterator is
   // Valid() after this call iff the source is not empty.
+  //将迭代器指向集合中最后一个元素
   virtual void SeekToLast() = 0;
 
   // Position at the first key in the source that is at or past target.
   // The iterator is Valid() after this call iff the source contains
   // an entry that comes at or past target.
+  //将迭代器指向集合中key为target的元素
   virtual void Seek(const Slice& target) = 0;
 
   // Moves to the next entry in the source.  After this call, Valid() is
   // true iff the iterator was not positioned at the last entry in the source.
   // REQUIRES: Valid()
+  //迭代器指向下一个元素
   virtual void Next() = 0;
 
   // Moves to the previous entry in the source.  After this call, Valid() is
   // true iff the iterator was not positioned at the first entry in source.
   // REQUIRES: Valid()
+  //将迭代器指向前一个元素
   virtual void Prev() = 0;
 
   // Return the key for the current entry.  The underlying storage for
   // the returned slice is valid only until the next modification of
   // the iterator.
   // REQUIRES: Valid()
+  //返回迭代器当前指向元素的key
   virtual Slice key() const = 0;
 
   // Return the value for the current entry.  The underlying storage for
   // the returned slice is valid only until the next modification of
   // the iterator.
   // REQUIRES: Valid()
+  //返回迭代器当前指向元素的data
   virtual Slice value() const = 0;
 
   // If an error has occurred, return it.  Else return an ok status.
@@ -78,6 +86,7 @@ class LEVELDB_EXPORT Iterator {
   // Note that unlike all of the preceding methods, this method is
   // not abstract and therefore clients should not override it.
   using CleanupFunction = void (*)(void* arg1, void* arg2);
+  //注册清理方法 以及参数 最终是调用run方法释放与清理 保存在cleanup_head_链表里  
   void RegisterCleanup(CleanupFunction function, void* arg1, void* arg2);
 
  private:
