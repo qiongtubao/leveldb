@@ -66,6 +66,7 @@ typedef uint64_t SequenceNumber;
 // can be packed together into 64-bits.
 static const SequenceNumber kMaxSequenceNumber = ((0x1ull << 56) - 1);
 
+//密钥 ：{user_key}{8位 sequence + type}
 struct ParsedInternalKey {
   Slice user_key;
   SequenceNumber sequence;
@@ -92,6 +93,7 @@ void AppendInternalKey(std::string* result, const ParsedInternalKey& key);
 bool ParseInternalKey(const Slice& internal_key, ParsedInternalKey* result);
 
 // Returns the user key portion of an internal key.
+//返回user_key字符串
 inline Slice ExtractUserKey(const Slice& internal_key) {
   assert(internal_key.size() >= 8);
   return Slice(internal_key.data(), internal_key.size() - 8);
@@ -99,6 +101,7 @@ inline Slice ExtractUserKey(const Slice& internal_key) {
 
 // A comparator for internal keys that uses a specified comparator for
 // the user key portion and breaks ties by decreasing sequence number.
+//秘钥对比器
 class InternalKeyComparator : public Comparator {
  private:
   const Comparator* user_comparator_;

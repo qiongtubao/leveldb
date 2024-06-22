@@ -37,7 +37,7 @@ class LEVELDB_EXPORT Status {
   static Status OK() { return Status(); }
 
   // Return error status of an appropriate type.
-  //创建5种类型的状态方法
+  //创建6种类型的状态方法
   static Status NotFound(const Slice& msg, const Slice& msg2 = Slice()) {
     return Status(kNotFound, msg, msg2);
   }
@@ -55,7 +55,7 @@ class LEVELDB_EXPORT Status {
   }
 
 
-  //判断状态的方法
+  //判断6种状态的方法
   // Returns true iff the status indicates success.
   bool ok() const { return (state_ == nullptr); }
 
