@@ -1,11 +1,7 @@
-
-
-#include <leveldb/c.h>
 #include <cassert>
 #include <leveldb/options.h>
 #include <leveldb/db.h>
 using namespace leveldb;
-
 
 int main() {
     leveldb::DB* db;
