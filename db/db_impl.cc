@@ -43,11 +43,15 @@ const int kNumNonTableCacheFiles = 10;
 struct DBImpl::Writer {
   explicit Writer(port::Mutex* mu)
       : batch(nullptr), sync(false), done(false), cv(mu) {}
-
+  //状态信息
   Status status;
+  //批量对象
   WriteBatch* batch;
+  //是否同步写入磁盘  
   bool sync;
+  //是否完成
   bool done;
+  //用于多线程操作的条件变量
   port::CondVar cv;
 };
 
@@ -1117,16 +1121,19 @@ Status DBImpl::Get(const ReadOptions& options, const Slice& key,
   Status s;
   MutexLock l(&mutex_);
   SequenceNumber snapshot;
+  //获取序列号并且赋值给snapshot
   if (options.snapshot != nullptr) {
     snapshot =
         static_cast<const SnapshotImpl*>(options.snapshot)->sequence_number();
   } else {
+    //获得当前最后的时间序列
     snapshot = versions_->LastSequence();
   }
 
   MemTable* mem = mem_;
   MemTable* imm = imm_;
   Version* current = versions_->current();
+  //引用计数+1 （标记正在使用 防止被删除回收）
   mem->Ref();
   if (imm != nullptr) imm->Ref();
   current->Ref();
@@ -1137,22 +1144,32 @@ Status DBImpl::Get(const ReadOptions& options, const Slice& key,
   // Unlock while reading from files and memtables
   {
     mutex_.Unlock();
+    //解锁
+    //先找memtable 
+    //再找Immutable memtable
+    //最后sstable
     // First look in the memtable, then in the immutable memtable (if any).
     LookupKey lkey(key, snapshot);
     if (mem->Get(lkey, value, &s)) {
       // Done
+      //先找memtable 
     } else if (imm != nullptr && imm->Get(lkey, value, &s)) {
       // Done
+      // 再找 immutable memtable
     } else {
       s = current->Get(options, lkey, value, &stats);
       have_stat_update = true;
+      //最后sstable
     }
+    //加锁
     mutex_.Lock();
   }
 
   if (have_stat_update && current->UpdateStats(stats)) {
+    //进行compaction
     MaybeScheduleCompaction();
   }
+  //计数器-1 
   mem->Unref();
   if (imm != nullptr) imm->Unref();
   current->Unref();
@@ -1204,7 +1221,10 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
   w.done = false;
 
   MutexLock l(&mutex_);
+  //添加到队列里
   writers_.push_back(&w);
+  //如果Write 是未完成和不是队里中的第一个执行的时候
+  //就一直挂起
   while (!w.done && &w != writers_.front()) {
     w.cv.Wait();
   }
@@ -1213,10 +1233,13 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
   }
 
   // May temporarily unlock and wait.
+  //创建一个状态
   Status status = MakeRoomForWrite(updates == nullptr);
+  //获得当前时间序列号
   uint64_t last_sequence = versions_->LastSequence();
   Writer* last_writer = &w;
   if (status.ok() && updates != nullptr) {  // nullptr batch is for compactions
+    //合并写入操作  （如何合并的 这里需要详细看了 不然有点不懂这个队列的逻辑）
     WriteBatch* write_batch = BuildBatchGroup(&last_writer);
     WriteBatchInternal::SetSequence(write_batch, last_sequence + 1);
     last_sequence += WriteBatchInternal::Count(write_batch);
@@ -1226,18 +1249,23 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
     // and protects against concurrent loggers and concurrent writes
     // into mem_.
     {
+      //解锁
       mutex_.Unlock();
+      //将更新记录到日志文件（log）
       status = log_->AddRecord(WriteBatchInternal::Contents(write_batch));
       bool sync_error = false;
       if (status.ok() && options.sync) {
+        //日志落盘
         status = logfile_->Sync();
         if (!status.ok()) {
           sync_error = true;
         }
       }
+      //将更新写入Memtable中 （mem_）
       if (status.ok()) {
         status = WriteBatchInternal::InsertInto(write_batch, mem_);
       }
+      //加锁
       mutex_.Lock();
       if (sync_error) {
         // The state of the log file is indeterminate: the log record we
@@ -1247,10 +1275,12 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
       }
     }
     if (write_batch == tmp_batch_) tmp_batch_->Clear();
-
+    //更新时间序
     versions_->SetLastSequence(last_sequence);
   }
-
+  //暂时还没理解
+  //由于合并写入操作一次可能会处理多个writers_队列中的元素 因此此处将所有已经处理的元素
+  //状态进行变更 并且发送signal信号
   while (true) {
     Writer* ready = writers_.front();
     writers_.pop_front();
@@ -1259,11 +1289,13 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
       ready->done = true;
       ready->cv.Signal();
     }
+    //一直到已经完成的是本次任务为止
     if (ready == last_writer) break;
   }
 
   // Notify new head of write queue
   if (!writers_.empty()) {
+    //发送信号唤起
     writers_.front()->cv.Signal();
   }
 
@@ -1482,40 +1514,50 @@ DB::~DB() = default;
 
 Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
   *dbptr = nullptr;
-
+  //初始化DBImpl对象
   DBImpl* impl = new DBImpl(options, dbname);
+  //操作前加锁
   impl->mutex_.Lock();
   VersionEdit edit;
   // Recover handles create_if_missing, error_if_exists
+  //是否需要保存manifest
   bool save_manifest = false;
+  //尝试恢复之前存在的数据库文件数据
   Status s = impl->Recover(&edit, &save_manifest);
   if (s.ok() && impl->mem_ == nullptr) {
     // Create new log and a corresponding memtable.
+    //创建新的Log和MemTable对象
     uint64_t new_log_number = impl->versions_->NewFileNumber();
     WritableFile* lfile;
+    //创建物理log文件
     s = options.env->NewWritableFile(LogFileName(dbname, new_log_number),
                                      &lfile);
     if (s.ok()) {
       edit.SetLogNumber(new_log_number);
       impl->logfile_ = lfile;
       impl->logfile_number_ = new_log_number;
+      //创建log对象
       impl->log_ = new log::Writer(lfile);
+      //创建memtable 对象
       impl->mem_ = new MemTable(impl->internal_comparator_);
       impl->mem_->Ref();
     }
   }
   if (s.ok() && save_manifest) {
+    //需要更新save manifest
     edit.SetPrevLogNumber(0);  // No older logs needed after recovery.
     edit.SetLogNumber(impl->logfile_number_);
-    s = impl->versions_->LogAndApply(&edit, &impl->mutex_);
+    s = impl->versions_->LogAndApply(&edit, &impl->mutex_);//生成新版本
   }
   if (s.ok()) {
-    impl->RemoveObsoleteFiles();
-    impl->MaybeScheduleCompaction();
+    impl->RemoveObsoleteFiles();//清理无用的文件
+    impl->MaybeScheduleCompaction();//尝试进行一次Compaction操作
   }
+  //操作完成 解锁
   impl->mutex_.Unlock();
   if (s.ok()) {
     assert(impl->mem_ != nullptr);
+    //返回db对象
     *dbptr = impl;
   } else {
     delete impl;
