@@ -21,6 +21,11 @@ namespace port {
 // ------------------ Threading -------------------
 
 // A Mutex represents an exclusive lock.
+// 互斥锁 (Mutex) 代表独占锁。
+// 是一种实现线程同步的主要方法，如果一个程序中有多个线程，
+//    任何时候均只有一个线程可以拥有这个互斥量，
+//    并且只有在拥有互斥量时才能对共享的数据资源进行访问
+//线程对数据的访问权，以实现多线程环境下的线程安全
 class LOCKABLE Mutex {
  public:
   Mutex();
@@ -28,20 +33,36 @@ class LOCKABLE Mutex {
 
   // Lock the mutex.  Waits until other lockers have exited.
   // Will deadlock if the mutex is already locked by this thread.
+  // 锁定互斥锁。等待直到其他锁定器退出。
+  // 如果互斥锁已被此线程锁定，则将发生死锁
   void Lock() EXCLUSIVE_LOCK_FUNCTION();
 
   // Unlock the mutex.
   // REQUIRES: This mutex was locked by this thread.
+  // 解锁互斥锁。
+  // 要求：此互斥锁已被该线程锁定。
   void Unlock() UNLOCK_FUNCTION();
 
   // Optionally crash if this thread does not hold this mutex.
   // The implementation must be fast, especially if NDEBUG is
   // defined.  The implementation is allowed to skip all checks.
+  // 如果此线程不持有此互斥锁，则可选择崩溃。
+  // 实现必须快速，特别是如果定义了 NDEBUG
+  //。实现可以跳过所有检查。
   void AssertHeld() ASSERT_EXCLUSIVE_LOCK();
 };
 
+//条件变量
+//实现线程同步的另外一个方法
+//在某些场情况下 要根据某些条件判断是否满足， 从而决定是等待还是继续执行
+//常规做法是线程一直处于活动状态，会一直占用CPU的计算资源，导致其他线程不能实现高效的异步操作
+//条件变量正式为了解决这个问题而设计的
+//在使用条件变量时，活动线程在某个条件成立时 调用Signal或者SignalAll唤醒阻塞的线程
+
 class CondVar {
  public:
+  //条件变量通常情况下是和互斥量搭配使用
+  //调用Wait的时候自动释放对mu对象的所有权
   explicit CondVar(Mutex* mu);
   ~CondVar();
 
@@ -49,12 +70,18 @@ class CondVar {
   // either a call to SignalAll(), or a call to Signal() that picks
   // this thread to wakeup.
   // REQUIRES: this thread holds *mu
+  // 原子地释放 *mu 并阻塞此条件变量，直到
+  // 调用 SignalAll()，或调用 Signal() 来选择
+  // 此线程被唤醒。
+  // 要求：此线程持有 *mu
   void Wait();
 
   // If there are some threads waiting, wake up at least one of them.
+  // 如果有一些线程在等待，则唤醒其中至少一个。
   void Signal();
 
   // Wake up all waiting threads.
+  // 唤醒所有等待的线程。
   void SignallAll();
 };
 
