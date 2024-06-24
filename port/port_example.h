@@ -89,12 +89,21 @@ class CondVar {
 
 // Store the snappy compression of "input[0,input_length-1]" in *output.
 // Returns false if snappy is not supported by this port.
+// input待压缩数据
+// input_length 数据长度
+// 压缩结果存储到output
+// 如果无法压缩返回false
 bool Snappy_Compress(const char* input, size_t input_length,
                      std::string* output);
 
 // If input[0,input_length-1] looks like a valid snappy compressed
 // buffer, store the size of the uncompressed data in *result and
 // return true.  Else return false.
+
+// input 待解压的数据
+// length 表示未解压数据长度
+// 进行解压 后的数据长度 存储到result中
+// 如果无法解压则返回false
 bool Snappy_GetUncompressedLength(const char* input, size_t length,
                                   size_t* result);
 
@@ -105,6 +114,10 @@ bool Snappy_GetUncompressedLength(const char* input, size_t length,
 // REQUIRES: at least the first "n" bytes of output[] must be writable
 // where "n" is the result of a successful call to
 // Snappy_GetUncompressedLength.
+// input 待解压数据
+// input_length 待解压数据长度
+// output 解压后数据存储到output
+// 如果无法解压返回false
 bool Snappy_Uncompress(const char* input_data, size_t input_length,
                        char* output);
 
