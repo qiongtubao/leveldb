@@ -126,12 +126,19 @@ bool Snappy_Uncompress(const char* input_data, size_t input_length,
 // If heap profiling is not supported, returns false.
 // Else repeatedly calls (*func)(arg, data, n) and then returns true.
 // The concatenation of all "data[0,n-1]" fragments is the heap profile.
+// 如果不支持堆分析，则返回 false。
+// 否则重复调用 (*func)(arg, data, n)，然后返回 true。
+// 所有“data[0,n-1]”片段的连接就是堆分析。
 bool GetHeapProfile(void (*func)(void*, const char*, int), void* arg);
 
 // Extend the CRC to include the first n bytes of buf.
 //
 // Returns zero if the CRC cannot be extended using acceleration, else returns
 // the newly extended CRC value (which may also be zero).
+// 扩展 CRC 以包含 buf 的前 n 个字节。
+//
+// 如果无法使用加速扩展 CRC，则返回0，
+// 否则返回新扩展的 CRC 值（也可能为零）。
 uint32_t AcceleratedCRC32C(uint32_t crc, const char* buf, size_t size);
 
 }  // namespace port

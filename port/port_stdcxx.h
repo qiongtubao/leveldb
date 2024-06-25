@@ -1,7 +1,9 @@
 // Copyright (c) 2018 The LevelDB Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
-
+/** 
+  port_example.h 的一个具体实现类
+*/ 
 #ifndef STORAGE_LEVELDB_PORT_PORT_STDCXX_H_
 #define STORAGE_LEVELDB_PORT_PORT_STDCXX_H_
 
@@ -44,6 +46,7 @@ namespace port {
 class CondVar;
 
 // Thinly wraps std::mutex.
+// 使用std::mutex （c++11引入) 想看非c++11的话 可退回版本到v1.20（port/port_posix.cc）
 class LOCKABLE Mutex {
  public:
   Mutex() = default;
@@ -62,6 +65,7 @@ class LOCKABLE Mutex {
 };
 
 // Thinly wraps std::condition_variable.
+// 使用 std::condition_variable （c++11引入) 想看非c++11的话 可退回版本到v1.20（port/port_posix.cc）
 class CondVar {
  public:
   explicit CondVar(Mutex* mu) : mu_(mu) { assert(mu != nullptr); }
@@ -70,9 +74,12 @@ class CondVar {
   CondVar(const CondVar&) = delete;
   CondVar& operator=(const CondVar&) = delete;
 
-  void Wait() {
+  void Wait() { 
+    //初始化 std::unique_lock
     std::unique_lock<std::mutex> lock(mu_->mu_, std::adopt_lock);
+    //等待条件变量
     cv_.wait(lock);
+    //释放锁
     lock.release();
   }
   void Signal() { cv_.notify_one(); }
