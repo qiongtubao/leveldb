@@ -105,6 +105,11 @@ class Limiter {
 //
 // Instances of this class are thread-friendly but not thread-safe, as required
 // by the SequentialFile API.
+// 使用 read() 实现文件中的顺序读取访问。
+//
+// 此类的实例是线程友好的，但不是线程安全的，这是 SequentialFile API 所要求的
+//。
+// SequentialFile api的实现
 class PosixSequentialFile final : public SequentialFile {
  public:
   PosixSequentialFile(std::string filename, int fd)
@@ -267,32 +272,39 @@ class PosixWritableFile final : public WritableFile {
     const char* write_data = data.data();
 
     // Fit as much as possible into buffer.
+    //buffer最大65536 （64k）
     size_t copy_size = std::min(write_size, kWritableFileBufferSize - pos_);
     std::memcpy(buf_ + pos_, write_data, copy_size);
     write_data += copy_size;
     write_size -= copy_size;
     pos_ += copy_size;
+    //数据写入buffer 
     if (write_size == 0) {
       return Status::OK();
     }
 
     // Can't fit in buffer, so need to do at least one write.
+    // buffer满了 先write到文件
     Status status = FlushBuffer();
     if (!status.ok()) {
       return status;
     }
 
     // Small writes go to buffer, large writes are written directly.
+    //剩下数据小于buffer最大大小（64k） 就存入buffer
     if (write_size < kWritableFileBufferSize) {
       std::memcpy(buf_, write_data, write_size);
       pos_ = write_size;
       return Status::OK();
     }
+    //直接写到文件
     return WriteUnbuffered(write_data, write_size);
   }
 
   Status Close() override {
+    //缓存写入 写入文件
     Status status = FlushBuffer();
+    //关闭fd
     const int close_result = ::close(fd_);
     if (close_result < 0 && status.ok()) {
       status = PosixError(filename_, errno);
@@ -301,7 +313,10 @@ class PosixWritableFile final : public WritableFile {
     return status;
   }
 
-  Status Flush() override { return FlushBuffer(); }
+  Status Flush() override { 
+    //缓存写入文件
+    return FlushBuffer(); 
+  }
 
   Status Sync() override {
     // Ensure new files referred to by the manifest are in the filesystem.
@@ -309,6 +324,10 @@ class PosixWritableFile final : public WritableFile {
     // This needs to happen before the manifest file is flushed to disk, to
     // avoid crashing in a state where the manifest refers to files that are not
     // yet on disk.
+    // 确保清单引用的新文件位于文件系统中。
+    //
+    // 这需要在清单文件刷新到磁盘之前发生，以
+    // 避免在清单引用尚未在磁盘上的文件的状态下崩溃。
     Status status = SyncDirIfManifest();
     if (!status.ok()) {
       return status;
@@ -325,6 +344,7 @@ class PosixWritableFile final : public WritableFile {
  private:
   Status FlushBuffer() {
     Status status = WriteUnbuffered(buf_, pos_);
+    //无论写入文件成功或者失败  pos都清空
     pos_ = 0;
     return status;
   }
@@ -366,6 +386,11 @@ class PosixWritableFile final : public WritableFile {
   //
   // The path argument is only used to populate the description string in the
   // returned Status if an error occurs.
+  // 确保与给定文件描述符关联的所有缓存
+  // 数据都被刷新到持久介质，并且可以承受电源
+  // 故障。
+  //
+  // 路径参数仅用于在发生错误时填充返回状态中的描述字符串。
   static Status SyncFd(int fd, const std::string& fd_path) {
 #if HAVE_FULLFSYNC
     // On macOS and iOS, fsync() doesn't guarantee durability past power

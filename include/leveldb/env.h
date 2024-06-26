@@ -82,6 +82,13 @@ class LEVELDB_EXPORT Env {
   // not exist.
   //
   // The returned file may be concurrently accessed by multiple threads.
+
+  // 创建一个支持从指定名称的文件中随机访问读取的对象。
+  // 成功时，将指向新文件的指针存储在 *result 中并返回 OK。
+  // 失败时将 nullptr 存储在 *result 中并返回非 OK。
+  // 如果文件不存在，则返回非 OK 状态。当文件不存在时，实现应返回 NotFound 状态。
+  //
+  // 返回的文件可能被多个线程同时访问。
   virtual Status NewRandomAccessFile(const std::string& fname,
                                      RandomAccessFile** result) = 0;
 
@@ -236,6 +243,14 @@ class LEVELDB_EXPORT SequentialFile {
   // If an error was encountered, returns a non-OK status.
   //
   // REQUIRES: External synchronization
+  // 从文件中读取最多“n”个字节。“scratch[0..n-1]”可能
+  // 由此例程写入。将“*result”设置为已
+  // 读取的数据（包括成功读取少于“n”个字节的情况）。
+  // 可以将“*result”设置为指向“scratch[0..n-1]”中的数据，因此
+  // 使用“*result”时，“scratch[0..n-1]”必须处于活动状态。
+  // 如果遇到错误，则返回非 OK 状态。
+  //
+  // 需要：外部同步(不是线程安全的访问方式)
   virtual Status Read(size_t n, Slice* result, char* scratch) = 0;
 
   // Skip "n" bytes from the file. This is guaranteed to be no
@@ -245,10 +260,16 @@ class LEVELDB_EXPORT SequentialFile {
   // file, and Skip will return OK.
   //
   // REQUIRES: External synchronization
+  // 从文件中跳过“n”个字节。这保证不会比读取相同数据慢，但可能会更快。
+  //
+  // 如果到达文件末尾，跳过将在文件末尾停止，并且 Skip 将返回 OK。
+  //
+  // 需要：外部同步(不是线程安全的访问方式)
   virtual Status Skip(uint64_t n) = 0;
 };
 
 // A file abstraction for randomly reading the contents of a file.
+// 用于随机读取文件内容的文件抽象
 class LEVELDB_EXPORT RandomAccessFile {
  public:
   RandomAccessFile() = default;
@@ -267,6 +288,14 @@ class LEVELDB_EXPORT RandomAccessFile {
   // status.
   //
   // Safe for concurrent use by multiple threads.
+  // 从文件“offset”开始读取最多“n”个字节。
+  // 此例程可以写入“scratch[0..n-1]”。
+  // 将“*result”设置为已读取的数据（包括成功读取的字节数少于“n”的情况）。
+  // 可以将“*result”设置为指向“scratch[0..n-1]”中的数据，
+  // 因此使用“*result”时“scratch[0..n-1]”必须处于活动状态。
+  // 如果遇到错误，则返回非 OK 状态。
+  //
+  // 可供多个线程同时使用。
   virtual Status Read(uint64_t offset, size_t n, Slice* result,
                       char* scratch) const = 0;
 };
@@ -282,8 +311,9 @@ class LEVELDB_EXPORT WritableFile {
   WritableFile& operator=(const WritableFile&) = delete;
 
   virtual ~WritableFile();
-
+  //追加
   virtual Status Append(const Slice& data) = 0;
+  //关闭
   virtual Status Close() = 0;
   virtual Status Flush() = 0;
   virtual Status Sync() = 0;
