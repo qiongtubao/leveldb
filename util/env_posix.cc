@@ -649,7 +649,7 @@ class PosixEnv : public Env {
     *result = new PosixWritableFile(filename, fd);
     return Status::OK();
   }
-
+  //创建一个顺序可写的文件 如果文件存在，则在原文件中继续添加，如果文件不存在，则创建新文件
   Status NewAppendableFile(const std::string& filename,
                            WritableFile** result) override {
     int fd = ::open(filename.c_str(),
@@ -662,11 +662,11 @@ class PosixEnv : public Env {
     *result = new PosixWritableFile(filename, fd);
     return Status::OK();
   }
-
+  //判断某个文件是否存在
   bool FileExists(const std::string& filename) override {
     return ::access(filename.c_str(), F_OK) == 0;
   }
-
+  //返回指定路径下所有的子文件
   Status GetChildren(const std::string& directory_path,
                      std::vector<std::string>* result) override {
     result->clear();
@@ -681,28 +681,28 @@ class PosixEnv : public Env {
     ::closedir(dir);
     return Status::OK();
   }
-
+  //取消关联文件
   Status RemoveFile(const std::string& filename) override {
     if (::unlink(filename.c_str()) != 0) {
       return PosixError(filename, errno);
     }
     return Status::OK();
   }
-
+  //创建新的文件夹
   Status CreateDir(const std::string& dirname) override {
     if (::mkdir(dirname.c_str(), 0755) != 0) {
       return PosixError(dirname, errno);
     }
     return Status::OK();
   }
-
+  //删除指定的文件夹
   Status RemoveDir(const std::string& dirname) override {
     if (::rmdir(dirname.c_str()) != 0) {
       return PosixError(dirname, errno);
     }
     return Status::OK();
   }
-
+  //获取文件大小
   Status GetFileSize(const std::string& filename, uint64_t* size) override {
     struct ::stat file_stat;
     if (::stat(filename.c_str(), &file_stat) != 0) {
@@ -712,14 +712,14 @@ class PosixEnv : public Env {
     *size = file_stat.st_size;
     return Status::OK();
   }
-
+  //文件重命名
   Status RenameFile(const std::string& from, const std::string& to) override {
     if (std::rename(from.c_str(), to.c_str()) != 0) {
       return PosixError(from, errno);
     }
     return Status::OK();
   }
-
+  //锁定指定文件，避免引发多线程操作对同一个文件的竞争访问
   Status LockFile(const std::string& filename, FileLock** lock) override {
     *lock = nullptr;
 
@@ -732,7 +732,7 @@ class PosixEnv : public Env {
       ::close(fd);
       return Status::IOError("lock " + filename, "already held by process");
     }
-
+    //加锁
     if (LockOrUnlock(fd, true) == -1) {
       int lock_errno = errno;
       ::close(fd);
@@ -743,7 +743,7 @@ class PosixEnv : public Env {
     *lock = new PosixFileLock(fd, filename);
     return Status::OK();
   }
-
+  //释放文件锁
   Status UnlockFile(FileLock* lock) override {
     PosixFileLock* posix_file_lock = static_cast<PosixFileLock*>(lock);
     if (LockOrUnlock(posix_file_lock->fd(), false) == -1) {
@@ -754,16 +754,16 @@ class PosixEnv : public Env {
     delete posix_file_lock;
     return Status::OK();
   }
-
+  //在后台线程中，调度执行一个指定的函数
   void Schedule(void (*background_work_function)(void* background_work_arg),
                 void* background_work_arg) override;
-
+  //启动一个新线程，执行一个指定的函数
   void StartThread(void (*thread_main)(void* thread_main_arg),
                    void* thread_main_arg) override {
     std::thread new_thread(thread_main, thread_main_arg);
     new_thread.detach();
   }
-
+  //返回一个用于测试任务的临时文件夹
   Status GetTestDirectory(std::string* result) override {
     const char* env = std::getenv("TEST_TMPDIR");
     if (env && env[0] != '\0') {
@@ -780,7 +780,7 @@ class PosixEnv : public Env {
 
     return Status::OK();
   }
-
+  //创建并返回一个Log文件
   Status NewLogger(const std::string& filename, Logger** result) override {
     int fd = ::open(filename.c_str(),
                     O_APPEND | O_WRONLY | O_CREAT | kOpenBaseFlags, 0644);
@@ -799,14 +799,14 @@ class PosixEnv : public Env {
       return Status::OK();
     }
   }
-
+  //返回当前时间  以ms为单位（一般用于计算某端代码的执行时间）
   uint64_t NowMicros() override {
     static constexpr uint64_t kUsecondsPerSecond = 1000000;
     struct ::timeval tv;
     ::gettimeofday(&tv, nullptr);
     return static_cast<uint64_t>(tv.tv_sec) * kUsecondsPerSecond + tv.tv_usec;
   }
-
+  //使线程休眠或者暂停，时间预先指定
   void SleepForMicroseconds(int micros) override {
     std::this_thread::sleep_for(std::chrono::microseconds(micros));
   }
@@ -872,13 +872,15 @@ PosixEnv::PosixEnv()
       started_background_thread_(false),
       mmap_limiter_(MaxMmaps()),
       fd_limiter_(MaxOpenFiles()) {}
-
+//将某个函数调度到后台线程中执行，后台线程长期存在
 void PosixEnv::Schedule(
     void (*background_work_function)(void* background_work_arg),
     void* background_work_arg) {
+  //加锁  使用port互斥量
   background_work_mutex_.Lock();
 
   // Start the background thread, if we haven't done so already.
+  // 初始化background线程，启线程执行一个BackgroundThreadEntryPoint函数
   if (!started_background_thread_) {
     started_background_thread_ = true;
     std::thread background_thread(PosixEnv::BackgroundThreadEntryPoint, this);
@@ -886,29 +888,36 @@ void PosixEnv::Schedule(
   }
 
   // If the queue is empty, the background thread may be waiting for work.
+  // 如果队列为空，后台线程可能正在等待工作。
   if (background_work_queue_.empty()) {
+    //唤醒后台线程
     background_work_cv_.Signal();
   }
-
+  //任务添加到队列里去
   background_work_queue_.emplace(background_work_function, background_work_arg);
+  //解锁
   background_work_mutex_.Unlock();
 }
 
 void PosixEnv::BackgroundThreadMain() {
   while (true) {
+    //加锁
     background_work_mutex_.Lock();
 
     // Wait until there is work to be done.
     while (background_work_queue_.empty()) {
+      //没有任务了 休眠等待唤醒
       background_work_cv_.Wait();
     }
 
     assert(!background_work_queue_.empty());
+    //获得第一个对象内方法和参数
     auto background_work_function = background_work_queue_.front().function;
     void* background_work_arg = background_work_queue_.front().arg;
     background_work_queue_.pop();
-
+    //解锁
     background_work_mutex_.Unlock();
+    //执行函数
     background_work_function(background_work_arg);
   }
 }

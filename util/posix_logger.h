@@ -32,6 +32,7 @@ class PosixLogger final : public Logger {
 
   void Logv(const char* format, std::va_list arguments) override {
     // Record the time as close to the Logv() call as possible.
+    // 记录尽可能接近 Logv() 调用的时间。
     struct ::timeval now_timeval;
     ::gettimeofday(&now_timeval, nullptr);
     const std::time_t now_seconds = now_timeval.tv_sec;
@@ -55,6 +56,8 @@ class PosixLogger final : public Logger {
                   "sizeof(char) is expected to be 1 in C++");
 
     int dynamic_buffer_size = 0;  // Computed in the first iteration.
+    //先使用一个固定大小的栈空间（512字节）保存该条日志，
+    //如果不成功，则动态分配一个更大的空间
     for (int iteration = 0; iteration < 2; ++iteration) {
       const int buffer_size =
           (iteration == 0) ? kStackBufferSize : dynamic_buffer_size;
@@ -62,6 +65,7 @@ class PosixLogger final : public Logger {
           (iteration == 0) ? stack_buffer : new char[dynamic_buffer_size];
 
       // Print the header into the buffer.
+      //{year}/{mon}/{day}-{hour}:{min}:{sec}.{usec} {thread-id}
       int buffer_offset = std::snprintf(
           buffer, buffer_size, "%04d/%02d/%02d-%02d:%02d:%02d.%06d %s ",
           now_components.tm_year + 1900, now_components.tm_mon + 1,
@@ -72,6 +76,9 @@ class PosixLogger final : public Logger {
       // The header can be at most 28 characters (10 date + 15 time +
       // 3 delimiters) plus the thread ID, which should fit comfortably into the
       // static buffer.
+      // 标头最多可包含 28 个字符（10 个日期 + 15 个时间 +
+      // 3 个分隔符）加上线程 ID，这些字符应该可以轻松放入
+      // 静态缓冲区中。
       assert(buffer_offset <= 28 + kMaxThreadIdSize);
       static_assert(28 + kMaxThreadIdSize < kStackBufferSize,
                     "stack-allocated buffer may not fit the message header");
@@ -87,12 +94,17 @@ class PosixLogger final : public Logger {
 
       // The code below may append a newline at the end of the buffer, which
       // requires an extra character.
+      // 下面的代码可能会在缓冲区末尾附加一个换行符，这
+      // 需要一个额外的字符。
       if (buffer_offset >= buffer_size - 1) {
         // The message did not fit into the buffer.
         if (iteration == 0) {
           // Re-run the loop and use a dynamically-allocated buffer. The buffer
           // will be large enough for the log message, an extra newline and a
           // null terminator.
+          // 重新运行循环并使用动态分配的缓冲区。缓冲区
+          // 将足够大，可以容纳日志消息、额外的换行符和
+          // 空终止符。
           dynamic_buffer_size = buffer_offset + 2;
           continue;
         }
