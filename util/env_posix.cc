@@ -79,12 +79,15 @@ class Limiter {
 
   // If another resource is available, acquire it and return true.
   // Else return false.
+  // 如果有其他资源可用，则获取它并返回 true。
+  // 否则返回 false。
   bool Acquire() {
+    //先执行-1  返回执行减1前的数据 如果数据>0 说明还有资源
     int old_acquires_allowed =
         acquires_allowed_.fetch_sub(1, std::memory_order_relaxed);
 
     if (old_acquires_allowed > 0) return true;
-
+    //没有资源 重新加1
     acquires_allowed_.fetch_add(1, std::memory_order_relaxed);
     return false;
   }
@@ -119,6 +122,7 @@ class PosixSequentialFile final : public SequentialFile {
   Status Read(size_t n, Slice* result, char* scratch) override {
     Status status;
     while (true) {
+      //read适合顺序读
       ::ssize_t read_size = ::read(fd_, scratch, n);
       if (read_size < 0) {  // Read error.
         if (errno == EINTR) {
@@ -176,7 +180,9 @@ class PosixRandomAccessFile final : public RandomAccessFile {
   Status Read(uint64_t offset, size_t n, Slice* result,
               char* scratch) const override {
     int fd = fd_;
+    //非永久打开文件的模式  打开读完后关闭
     if (!has_permanent_fd_) {
+      //只读
       fd = ::open(filename_.c_str(), O_RDONLY | kOpenBaseFlags);
       if (fd < 0) {
         return PosixError(filename_, errno);
@@ -186,6 +192,7 @@ class PosixRandomAccessFile final : public RandomAccessFile {
     assert(fd != -1);
 
     Status status;
+    //pread适合随机读 线程安全
     ssize_t read_size = ::pread(fd, scratch, n, static_cast<off_t>(offset));
     *result = Slice(scratch, (read_size < 0) ? 0 : read_size);
     if (read_size < 0) {
@@ -221,6 +228,13 @@ class PosixMmapReadableFile final : public RandomAccessFile {
   // |mmap_limiter| must outlive this instance. The caller must have already
   // aquired the right to use one mmap region, which will be released when this
   // instance is destroyed.
+  // mmap_base[0, length-1] 指向文件的内存映射内容。它
+  // 必须是成功调用 mmap() 的结果。此实例接管
+  // 该区域的所有权。
+  //
+  // |mmap_limiter| 必须比此实例存活更久。调用者必须已经
+  // 获得了使用一个 mmap 区域的权利，该权利将在此
+  // 实例被销毁时释放。
   PosixMmapReadableFile(std::string filename, char* mmap_base, size_t length,
                         Limiter* mmap_limiter)
       : mmap_base_(mmap_base),
@@ -233,13 +247,14 @@ class PosixMmapReadableFile final : public RandomAccessFile {
     mmap_limiter_->Release();
   }
 
+  //PosixMmapReadableFile  打开mmap的模式是只读
   Status Read(uint64_t offset, size_t n, Slice* result,
               char* scratch) const override {
     if (offset + n > length_) {
       *result = Slice();
       return PosixError(filename_, EINVAL);
     }
-
+    //可看作内存读取  
     *result = Slice(mmap_base_ + offset, n);
     return Status::OK();
   }
@@ -397,14 +412,33 @@ class PosixWritableFile final : public WritableFile {
     // failures. fcntl(F_FULLFSYNC) is required for that purpose. Some
     // filesystems don't support fcntl(F_FULLFSYNC), and require a fallback to
     // fsync().
+    // 在 macOS 和 iOS 上，fsync() 无法保证电源故障后的耐用性。为此需要 fcntl(F_FULLFSYNC)。某些
+    // 文件系统不支持 fcntl(F_FULLFSYNC)，需要回退到
+    // fsync()。
     if (::fcntl(fd, F_FULLFSYNC) == 0) {
       return Status::OK();
     }
 #endif  // HAVE_FULLFSYNC
 
 #if HAVE_FDATASYNC
+    /*
+      fdatasync()
+      fdatasync()函数与fsync()类似，但它只刷新文件的数据部分，而不包括元数据。
+      这意味着fdatasync()通常比fsync()更快，因为它减少了I/O操作的次数，特别是当元数据写入磁盘的成本较高时。
+     */
     bool sync_success = ::fdatasync(fd) == 0;
 #else
+    /*
+    fsync()
+      fsync()函数的作用是刷新由文件描述符指定的文件的缓存，
+      并确保所有修改过的内容都被写入到磁盘上。
+      这包括文件的数据以及元数据（metadata），如文件的大小、权限、时间戳等。
+      因为元数据通常存储在不同的磁盘位置，
+      所以fsync()可能需要进行多次I/O操作来完成。
+      这意味着fsync()至少会触发两次磁盘写操作：
+      一次是为了写入新数据，
+      另一次是为了更新文件的修改时间（mtime）和其他元数据。
+    */
     bool sync_success = ::fsync(fd) == 0;
 #endif  // HAVE_FDATASYNC
 
@@ -417,6 +451,9 @@ class PosixWritableFile final : public WritableFile {
   // Returns the directory name in a path pointing to a file.
   //
   // Returns "." if the path does not contain any directory separator.
+  // 返回指向文件的路径中的目录名称。
+  //
+  // 如果路径不包含任何目录分隔符，则返回“.”。
   static std::string Dirname(const std::string& filename) {
     std::string::size_type separator_pos = filename.rfind('/');
     if (separator_pos == std::string::npos) {
@@ -424,6 +461,8 @@ class PosixWritableFile final : public WritableFile {
     }
     // The filename component should not contain a path separator. If it does,
     // the splitting was done incorrectly.
+    // 文件名部分不应包含路径分隔符。如果包含，则
+    // 拆分操作不正确。 
     assert(filename.find('/', separator_pos + 1) == std::string::npos);
 
     return filename.substr(0, separator_pos);
@@ -433,6 +472,10 @@ class PosixWritableFile final : public WritableFile {
   //
   // The returned Slice points to |filename|'s data buffer, so it is only valid
   // while |filename| is alive and unchanged.
+  // 从指向文件的路径中提取文件名。
+  //
+  // 返回的 Slice 指向 |filename| 的数据缓冲区，因此它仅在
+  // |filename| 处于活动状态且未发生改变时才有效。
   static Slice Basename(const std::string& filename) {
     std::string::size_type separator_pos = filename.rfind('/');
     if (separator_pos == std::string::npos) {
@@ -440,6 +483,8 @@ class PosixWritableFile final : public WritableFile {
     }
     // The filename component should not contain a path separator. If it does,
     // the splitting was done incorrectly.
+    // 文件名部分不应包含路径分隔符。如果包含，则
+    // 拆分操作不正确。
     assert(filename.find('/', separator_pos + 1) == std::string::npos);
 
     return Slice(filename.data() + separator_pos + 1,
@@ -461,6 +506,26 @@ class PosixWritableFile final : public WritableFile {
   const std::string dirname_;  // The directory of filename_.
 };
 
+/**
+ * 
+fcntl函数中的F_SETLK命令用于对文件进行加锁（锁定）。在Unix和类Unix系统中，文件锁是一种同步机制，用于防止多个进程同时修改同一个文件，从而保证数据的一致性和完整性。
+F_SETLK命令允许进程尝试对文件的某一部分施加共享锁（读锁）或排他锁（写锁）。当一个进程持有一个文件的排他锁时，其他进程不能对该文件的同一部分加任何类型的锁，直到原来的锁被释放。共享锁允许多个进程同时读取文件，但不允许任何进程写入文件。
+F_SETLK命令的使用通常涉及传递一个struct flock结构体指针作为fcntl函数的第三个参数。struct flock定义了锁的类型、范围和行为。下面是struct flock的定义：
+struct flock {
+    short l_type;   // Type of lock 
+    short l_whence; // How to interpret l_start 
+    off_t l_start;  // Offset from l_whence 
+    off_t l_len;    // Lock length 
+    pid_t l_pid;    // Process ID 
+};
+l_type字段可以是F_RDLCK（读锁）或F_WRLCK（写锁）。
+l_whence字段指定l_start字段的解释方式，通常使用SEEK_SET、SEEK_CUR或SEEK_END。
+l_start和l_len字段一起定义了要锁定的文件区域的起始位置和长度。
+l_pid字段通常由内核填充，用于存储持有锁的进程ID。
+当使用F_SETLK时，进程尝试立即获取锁，如果锁已经被另一个进程持有并且是排他锁，那么F_SETLK会立即失败，并返回一个错误（通常是EWOULDBLOCK）。如果锁是共享锁，并且请求的也是共享锁，那么F_SETLK可能会成功。
+如果你想等待锁被释放，可以使用F_SETLKW命令，它会阻塞进程直到锁变为可用。这可以防止死锁的情况，但同时也增加了进程的等待时间。
+文件锁是处理并发文件访问的重要工具，特别是在多线程或多进程环境中，它们可以确保文件数据在修改时不会被破坏。不过，使用文件锁时需要小心，避免死锁和资源争用的情况。
+ */
 int LockOrUnlock(int fd, bool lock) {
   errno = 0;
   struct ::flock file_lock_info;
@@ -521,7 +586,7 @@ class PosixEnv : public Env {
     std::fwrite(msg, 1, sizeof(msg), stderr);
     std::abort();
   }
-
+  //创建顺序读文件
   Status NewSequentialFile(const std::string& filename,
                            SequentialFile** result) override {
     int fd = ::open(filename.c_str(), O_RDONLY | kOpenBaseFlags);
@@ -533,7 +598,7 @@ class PosixEnv : public Env {
     *result = new PosixSequentialFile(filename, fd);
     return Status::OK();
   }
-
+  //生成随机读文件 优先创建mmap文件
   Status NewRandomAccessFile(const std::string& filename,
                              RandomAccessFile** result) override {
     *result = nullptr;
@@ -566,9 +631,14 @@ class PosixEnv : public Env {
     }
     return status;
   }
-
+  //创建一个写文件，如果原来有数据则清空数据， 
   Status NewWritableFile(const std::string& filename,
                          WritableFile** result) override {
+    //O_TRUNC | O_WRONLY | O_CREAT | kOpenBaseFlags: 这是一个位或运算表达式，用于设置open函数的标志参数。这些标志决定了文件的打开模式和行为：
+    //O_TRUNC: 如果文件已存在，那么在打开时会被截断至零长度，即清空文件内容。如果文件不存在，此标志将被忽略。
+    //O_WRONLY: 请求以只写模式打开文件。如果文件不存在，O_CREAT标志的存在将导致文件被创建。
+    //O_CREAT: 请求创建文件，如果文件不存在的话。与O_WRONLY结合使用时，将创建一个可写的空文件。
+    //kOpenBaseFlags: 这是一个预定义的宏或变量，它可能包含其他的open标志，具体取决于其定义。例如，它可能包含O_BINARY或O_LARGEFILE等，这取决于你的具体需求和平台支持。
     int fd = ::open(filename.c_str(),
                     O_TRUNC | O_WRONLY | O_CREAT | kOpenBaseFlags, 0644);
     if (fd < 0) {
