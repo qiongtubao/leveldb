@@ -62,6 +62,9 @@ class LEVELDB_EXPORT Env {
   // implementation instead of relying on this default environment.
   //
   // The result of Default() belongs to leveldb and must never be deleted.
+  // 返回适合当前操作系统的默认环境。高级用户可能希望提供自己的 Env 实现，而不是依赖于此默认环境。
+  //
+  // Default() 的结果属于 leveldb，绝不能删除。   
   static Env* Default();
 
   // Create an object that sequentially reads the file with the specified name.
@@ -330,6 +333,7 @@ class LEVELDB_EXPORT Logger {
   virtual ~Logger();
 
   // Write an entry to the log file with the specified format.
+  // 使用指定的格式将条目写入日志文件。
   virtual void Logv(const char* format, std::va_list ap) = 0;
 };
 

@@ -56,10 +56,16 @@ inline char* Arena::Allocate(size_t bytes) {
   // The semantics of what to return are a bit messy if we allow
   // 0-byte allocations, so we disallow them here (we don't need
   // them for our internal use).
+  // 如果我们允许 0 字节分配，则返回内容的语义会有点混乱，
+  // 因此我们在此禁止它们（我们不需要它们供内部使用）。
   assert(bytes > 0);
+  //大小小于剩余字节数
   if (bytes <= alloc_bytes_remaining_) {
+    //记录当前最后指针
     char* result = alloc_ptr_;
+    //调整指针最后位置
     alloc_ptr_ += bytes;
+    //调整剩余字节数
     alloc_bytes_remaining_ -= bytes;
     return result;
   }

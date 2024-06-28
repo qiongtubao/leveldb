@@ -19,11 +19,13 @@
 namespace leveldb {
 
 namespace {
-
+//内存文件系统的核心
 class FileState {
  public:
   // FileStates are reference counted. The initial reference count is zero
   // and the caller must call Ref() at least once.
+  // FileStates 是引用计数的。初始引用计数为零
+  // 并且调用者必须至少调用一次 Ref()。
   FileState() : refs_(0), size_(0) {}
 
   // No copying allowed.
@@ -37,6 +39,7 @@ class FileState {
   }
 
   // Decrease the reference count. Delete if this is the last reference.
+  // 减少引用计数。如果这是最后一个引用，则删除
   void Unref() {
     bool do_delete = false;
 
@@ -83,6 +86,7 @@ class FileState {
     }
 
     assert(offset / kBlockSize <= std::numeric_limits<size_t>::max());
+    //每个内存块 8192字节(8K)
     size_t block = static_cast<size_t>(offset / kBlockSize);
     size_t block_offset = offset % kBlockSize;
     size_t bytes_to_copy = n;
@@ -112,13 +116,16 @@ class FileState {
     MutexLock lock(&blocks_mutex_);
     while (src_len > 0) {
       size_t avail;
+      //计算最后一个block中位置
       size_t offset = size_ % kBlockSize;
 
       if (offset != 0) {
         // There is some room in the last block.
+        //  剩余大小
         avail = kBlockSize - offset;
       } else {
         // No room in the last block; push new one.
+        // 创建新的block
         blocks_.push_back(new char[kBlockSize]);
         avail = kBlockSize;
       }
@@ -126,6 +133,8 @@ class FileState {
       if (avail > src_len) {
         avail = src_len;
       }
+
+      //拷贝数据
       std::memcpy(blocks_.back() + offset, src, avail);
       src_len -= avail;
       src += avail;
@@ -145,6 +154,8 @@ class FileState {
   int refs_ GUARDED_BY(refs_mutex_);
 
   mutable port::Mutex blocks_mutex_;
+  //动态数组
+  /**GUARDED_BY是一个注解（annotation），常见于C++代码中，尤其是使用静态分析工具如Clang的Thread Safety Analysis时。它不直接影响程序的运行时行为，而是为编译器或静态分析工具提供元数据，帮助分析代码的线程安全性。 */
   std::vector<char*> blocks_ GUARDED_BY(blocks_mutex_);
   uint64_t size_ GUARDED_BY(blocks_mutex_);
 };
@@ -218,6 +229,7 @@ class NoOpLogger : public Logger {
   void Logv(const char* format, std::va_list ap) override {}
 };
 
+//所有操作基于内存，提升文件I/O读写速度
 class InMemoryEnv : public EnvWrapper {
  public:
   explicit InMemoryEnv(Env* base_env) : EnvWrapper(base_env) {}
@@ -377,6 +389,7 @@ class InMemoryEnv : public EnvWrapper {
 
  private:
   // Map from filenames to FileState objects, representing a simple file system.
+  // 从文件名映射到 FileState 对象，表示一个简单的文件系统。
   typedef std::map<std::string, FileState*> FileSystem;
 
   port::Mutex mutex_;
