@@ -519,10 +519,15 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
 Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
                                 Version* base) {
   mutex_.AssertHeld();
+  //获得时间
   const uint64_t start_micros = env_->NowMicros();
+  //文件元信息
   FileMetaData meta;
+  //获得文件版本
   meta.number = versions_->NewFileNumber();
+  //
   pending_outputs_.insert(meta.number);
+  //memtable迭代器
   Iterator* iter = mem->NewIterator();
   Log(options_.info_log, "Level-0 table #%llu: started",
       (unsigned long long)meta.number);
@@ -530,6 +535,7 @@ Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
   Status s;
   {
     mutex_.Unlock();
+    //把Memable迭代器传入  生成一个SSTable
     s = BuildTable(dbname_, env_, options_, table_cache_, iter, &meta);
     mutex_.Lock();
   }
@@ -554,8 +560,11 @@ Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
   }
 
   CompactionStats stats;
+  //耗时
   stats.micros = env_->NowMicros() - start_micros;
+  //写入文件个数
   stats.bytes_written = meta.file_size;
+  //
   stats_[level].Add(stats);
   return s;
 }
