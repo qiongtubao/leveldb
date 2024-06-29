@@ -385,7 +385,7 @@ Status DBImpl::Recover(VersionEdit* edit, bool* save_manifest) {
 
   return Status::OK();
 }
-
+//恢复日志文件
 Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
                               bool* save_manifest, VersionEdit* edit,
                               SequenceNumber* max_sequence) {
@@ -405,8 +405,10 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
   mutex_.AssertHeld();
 
   // Open the log file
+  //获得日志文件
   std::string fname = LogFileName(dbname_, log_number);
   SequentialFile* file;
+  //打开顺序读文件
   Status status = env_->NewSequentialFile(fname, &file);
   if (!status.ok()) {
     MaybeIgnoreError(&status);
@@ -423,6 +425,7 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
   // paranoid_checks==false so that corruptions cause entire commits
   // to be skipped instead of propagating bad information (like overly
   // large sequence numbers).
+  //创建一个读取器
   log::Reader reader(file, &reporter, true /*checksum*/, 0 /*initial_offset*/);
   Log(options_.info_log, "Recovering log #%llu",
       (unsigned long long)log_number);
@@ -434,17 +437,21 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
   int compactions = 0;
   MemTable* mem = nullptr;
   while (reader.ReadRecord(&record, &scratch) && status.ok()) {
+    //每条日志 至少要sequencenumer(8) + count(4)
     if (record.size() < 12) {
       reporter.Corruption(record.size(),
                           Status::Corruption("log record too small"));
       continue;
     }
+    //存到批量 batch
     WriteBatchInternal::SetContents(&batch, record);
 
     if (mem == nullptr) {
+      //创建memtable
       mem = new MemTable(internal_comparator_);
       mem->Ref();
     }
+    //写入
     status = WriteBatchInternal::InsertInto(&batch, mem);
     MaybeIgnoreError(&status);
     if (!status.ok()) {
@@ -455,10 +462,11 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
     if (last_seq > *max_sequence) {
       *max_sequence = last_seq;
     }
-
+    //如果MemTable 大小超过阈值，需要将其生成sstable
     if (mem->ApproximateMemoryUsage() > options_.write_buffer_size) {
       compactions++;
       *save_manifest = true;
+      //写入到level0
       status = WriteLevel0Table(mem, edit, nullptr);
       mem->Unref();
       mem = nullptr;
@@ -470,9 +478,11 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
     }
   }
 
+  //删除log文件实例
   delete file;
 
   // See if we should keep reusing the last log file.
+  // 查看我们是否应该继续重复使用上一个日志文件。
   if (status.ok() && options_.reuse_logs && last_log && compactions == 0) {
     assert(logfile_ == nullptr);
     assert(log_ == nullptr);
@@ -1251,7 +1261,10 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
     {
       //解锁
       mutex_.Unlock();
-      //将更新记录到日志文件（log）
+      //将更新记录到预写日志文件（log）
+      //一个log等于一个memtable 当生存memtable后就删除log
+      //write_batch
+      //sequenceNum(8) + count(4) + type(1)[0x0 delete][0x1 key/value] + key_len + key + value_len + value
       status = log_->AddRecord(WriteBatchInternal::Contents(write_batch));
       bool sync_error = false;
       if (status.ok() && options.sync) {
