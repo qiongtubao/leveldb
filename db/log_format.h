@@ -14,12 +14,14 @@ namespace log {
 enum RecordType {
   // Zero is reserved for preallocated files
   kZeroType = 0,
-
+  //表示一条记录完整的写到了一个块上
   kFullType = 1,
-
+  //表示该条记录的第一部分
   // For fragments
   kFirstType = 2,
+  //表示记录的中间部分
   kMiddleType = 3,
+  //表示记录的最后部分
   kLastType = 4
 };
 static const int kMaxRecordType = kLastType;

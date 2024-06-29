@@ -4,7 +4,15 @@
 
 #ifndef STORAGE_LEVELDB_DB_LOG_WRITER_H_
 #define STORAGE_LEVELDB_DB_LOG_WRITER_H_
-
+/**
+ * 预写日志为Log
+ * 当向LevelDb写入数据时候，只需要将数据写入内存中的MemTable 而内存是易失性存储 
+ * 因此LevelDb需要一个额外的持久化文件：预写日志Write-Ahead Log(重做日志)
+ * 这是一个追加修改，顺序写入磁盘的文件
+ * 当宕机或者程序崩溃时 WAL 能够保证写入成功的数据不会丢失
+ * 将MemTable 成功写入SSTable 后，相应的预写日志就可以删除了
+ * 
+ */
 #include <cstdint>
 
 #include "db/log_format.h"
@@ -45,6 +53,9 @@ class Writer {
   // crc32c values for all supported record types.  These are
   // pre-computed to reduce the overhead of computing the crc of the
   // record type stored in the header.
+  // 所有受支持的记录类型的 crc32c 值。这些值是
+  // 预先计算的，以减少计算存储在标头中的
+  // 记录类型的 crc 的开销。
   uint32_t type_crc_[kMaxRecordType + 1];
 };
 
