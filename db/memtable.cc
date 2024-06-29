@@ -73,6 +73,12 @@ class MemTableIterator : public Iterator {
 
 Iterator* MemTable::NewIterator() { return new MemTableIterator(&table_); }
 
+/**
+ * seq key的序列号
+ * type key的操作类型  0x0删除 0x1增加修改key
+ * key
+ * value
+ */
 void MemTable::Add(SequenceNumber s, ValueType type, const Slice& key,
                    const Slice& value) {
   // Format of an entry is concatenation of:
@@ -82,25 +88,36 @@ void MemTable::Add(SequenceNumber s, ValueType type, const Slice& key,
   //  value bytes  : char[value.size()]
   size_t key_size = key.size();
   size_t val_size = value.size();
+  //8 = seq（7） + type（1）
   size_t internal_key_size = key_size + 8;
+  // {key_size + 8} + {key} + seq + type + value_size + value
   const size_t encoded_len = VarintLength(internal_key_size) +
                              internal_key_size + VarintLength(val_size) +
                              val_size;
+  //申请内存
   char* buf = arena_.Allocate(encoded_len);
+  //写入 key + seq + type 长度
   char* p = EncodeVarint32(buf, internal_key_size);
+  //写入key
   std::memcpy(p, key.data(), key_size);
   p += key_size;
+  //写入 seq + type
   EncodeFixed64(p, (s << 8) | type);
   p += 8;
+  //写入value长度
   p = EncodeVarint32(p, val_size);
+  //写入value
   std::memcpy(p, value.data(), val_size);
   assert(p + val_size == buf + encoded_len);
+  //table添加buf
   table_.Insert(buf);
 }
 
 bool MemTable::Get(const LookupKey& key, std::string* value, Status* s) {
   Slice memkey = key.memtable_key();
+  //生成一个SkipList迭代器
   Table::Iterator iter(&table_);
+  //在SkipList中查找
   iter.Seek(memkey.data());
   if (iter.Valid()) {
     // entry format is:
@@ -114,18 +131,23 @@ bool MemTable::Get(const LookupKey& key, std::string* value, Status* s) {
     // all entries with overly large sequence numbers.
     const char* entry = iter.key();
     uint32_t key_length;
+    //获得key的值
     const char* key_ptr = GetVarint32Ptr(entry, entry + 5, &key_length);
+    //如果判断key完全相同，则继续取出ValueType 判断是否已经删除
     if (comparator_.comparator.user_comparator()->Compare(
             Slice(key_ptr, key_length - 8), key.user_key()) == 0) {
       // Correct user key
+      //获得类型
       const uint64_t tag = DecodeFixed64(key_ptr + key_length - 8);
       switch (static_cast<ValueType>(tag & 0xff)) {
         case kTypeValue: {
+          //如果ValueType为增加一个键值对 则取出值并且返回true
           Slice v = GetLengthPrefixedSlice(key_ptr + key_length);
           value->assign(v.data(), v.size());
           return true;
         }
         case kTypeDeletion:
+          //如果ValueType为删除一个键值对 则将状态赋值为NotFound 并返回ture
           *s = Status::NotFound(Slice());
           return true;
       }

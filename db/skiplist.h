@@ -154,12 +154,15 @@ struct SkipList<Key, Comparator>::Node {
     assert(n >= 0);
     // Use an 'acquire load' so that we observe a fully initialized
     // version of the returned Node.
+    // Next()方法直接通过节点的指针查找下一个节点即可 O(1)
     return next_[n].load(std::memory_order_acquire);
   }
   void SetNext(int n, Node* x) {
     assert(n >= 0);
     // Use a 'release store' so that anybody who reads through this
     // pointer observes a fully initialized version of the inserted node.
+    // 使用“释放存储”，以便任何读过此
+    // 指针的人都能观察到插入节点的完全初始化版本。
     next_[n].store(x, std::memory_order_release);
   }
 
@@ -213,6 +216,7 @@ template <typename Key, class Comparator>
 inline void SkipList<Key, Comparator>::Iterator::Prev() {
   // Instead of using explicit "prev" links, we just search for the
   // last node that falls before key.
+  // 我们不使用明确的“prev”链接，而是只搜索位于 key 之前的最后一个节点。
   assert(Valid());
   node_ = list_->FindLessThan(node_->key);
   if (node_ == list_->head_) {
@@ -222,6 +226,7 @@ inline void SkipList<Key, Comparator>::Iterator::Prev() {
 
 template <typename Key, class Comparator>
 inline void SkipList<Key, Comparator>::Iterator::Seek(const Key& target) {
+  //通过调用FindGreaterOrEqual方法查找目标键
   node_ = list_->FindGreaterOrEqual(target, nullptr);
 }
 
@@ -242,7 +247,13 @@ template <typename Key, class Comparator>
 int SkipList<Key, Comparator>::RandomHeight() {
   // Increase height with probability 1 in kBranching
   static const unsigned int kBranching = 4;
+  //初始层高为1
   int height = 1;
+  //kMaxHeight: 最大层高12 通过概率确定是否需要增加层高
+  //层数越高随机到的概率越低
+  // 1层 4/4
+  // 2层 1/4
+  // 3层 1/16
   while (height < kMaxHeight && ((rnd_.Next() % kBranching) == 0)) {
     height++;
   }
@@ -262,13 +273,18 @@ typename SkipList<Key, Comparator>::Node*
 SkipList<Key, Comparator>::FindGreaterOrEqual(const Key& key,
                                               Node** prev) const {
   Node* x = head_;
+  //从头节点的最高层开始查找
   int level = GetMaxHeight() - 1;
   while (true) {
+    //获得节点
     Node* next = x->Next(level);
+    //如果节点中的值小于要查找的值，则继续通过该层链表查找下一个节点
     if (KeyIsAfterNode(key, next)) {
       // Keep searching in this list
       x = next;
     } else {
+      //如果节点中的值大于等于要查找的值，则降低层数，在下一层查找。如果已经查找到最底层
+      //则返回该节点
       if (prev != nullptr) prev[level] = x;
       if (level == 0) {
         return next;
@@ -334,17 +350,25 @@ SkipList<Key, Comparator>::SkipList(Comparator cmp, Arena* arena)
 }
 
 template <typename Key, class Comparator>
+//插入逻辑
 void SkipList<Key, Comparator>::Insert(const Key& key) {
   // TODO(opt): We can use a barrier-free variant of FindGreaterOrEqual()
   // here since Insert() is externally synchronized.
+  // TODO(opt): 我们可以使用 FindGreaterOrEqual() 的无障碍变体
+  // 因为 Insert() 是外部同步的。
+  //prev 共有最多12层
   Node* prev[kMaxHeight];
+  //查找大于或者等于key的 每层节点
   Node* x = FindGreaterOrEqual(key, prev);
 
   // Our data structure does not allow duplicate insertion
+  // 找不到key 才能插入
   assert(x == nullptr || !Equal(key, x->key));
-
+  //随机层高
   int height = RandomHeight();
+  //大于当前最高层的话
   if (height > GetMaxHeight()) {
+    //高于当前最高层的层数的prev 设置为head_ (最开始的地方)
     for (int i = GetMaxHeight(); i < height; i++) {
       prev[i] = head_;
     }
@@ -355,14 +379,23 @@ void SkipList<Key, Comparator>::Insert(const Key& key) {
     // the loop below.  In the former case the reader will
     // immediately drop to the next level since nullptr sorts after all
     // keys.  In the latter case the reader will use the new node.
+    // 可以在没有任何同步的情况下对 max_height_ 进行变异，同时使用多个读取器。
+    // 观察 max_height_ 的新值的并发读取器将看到 
+    // head_ 的新级别指针的旧值（nullptr），
+    // 或者下面循环中设置的新值。在前一种情况下，读取器将立即下降到下一级，
+    // 因为 nullptr 排在所有键之后。在后一种情况下，读取器将使用新节点。
     max_height_.store(height, std::memory_order_relaxed);
   }
-
+  //新节点key和高度
   x = NewNode(key, height);
+  //开始在每层进行插入
   for (int i = 0; i < height; i++) {
     // NoBarrier_SetNext() suffices since we will add a barrier when
     // we publish a pointer to "x" in prev[i].
+    // NoBarrier_SetNext() 就足够了，因为当我们在 prev[i] 中发布指向“x”的指针时，我们会添加一个屏障。
+    //当前key节点的下一个是prev节点中的下一个
     x->NoBarrier_SetNext(i, prev[i]->NoBarrier_Next(i));
+    //prev节点的下一个设置为当前key节点
     prev[i]->SetNext(i, x);
   }
 }
