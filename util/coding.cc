@@ -18,6 +18,7 @@ void PutFixed64(std::string* dst, uint64_t value) {
   dst->append(buf, sizeof(buf));
 }
 
+//可变uint32_t 类似7bit存储
 char* EncodeVarint32(char* dst, uint32_t v) {
   // Operate on characters as unsigneds
   uint8_t* ptr = reinterpret_cast<uint8_t*>(dst);
@@ -133,10 +134,12 @@ const char* GetVarint64Ptr(const char* p, const char* limit, uint64_t* value) {
 bool GetVarint64(Slice* input, uint64_t* value) {
   const char* p = input->data();
   const char* limit = p + input->size();
+  //动态的64bit   limit会返回最后的位置
   const char* q = GetVarint64Ptr(p, limit, value);
   if (q == nullptr) {
     return false;
   } else {
+    //重新生成Slice 返回
     *input = Slice(q, limit - q);
     return true;
   }

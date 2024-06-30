@@ -19,6 +19,7 @@ namespace leveldb {
 
 inline uint32_t Block::NumRestarts() const {
   assert(size_ >= sizeof(uint32_t));
+  //最后4个字节是重启个数
   return DecodeFixed32(data_ + size_ - sizeof(uint32_t));
 }
 
@@ -52,6 +53,8 @@ Block::~Block() {
 //
 // If any errors are detected, returns nullptr.  Otherwise, returns a
 // pointer to the key delta (just past the three decoded values).
+//解析数据
+// {共享key长度} {非共享key长度} {value长度} {非共享key的数据} {value的数据}
 static inline const char* DecodeEntry(const char* p, const char* limit,
                                       uint32_t* shared, uint32_t* non_shared,
                                       uint32_t* value_length) {
@@ -164,14 +167,22 @@ class Block::Iter : public Iterator {
   void Seek(const Slice& target) override {
     // Binary search in restart array to find the last restart point
     // with a key < target
+    // 在重启数组中进行二分搜索，找到最后一个重启点
+    // 键为 < 目标
     uint32_t left = 0;
+    // num_restarts_为重启点个数
     uint32_t right = num_restarts_ - 1;
+    //通过重启点进行二分查找
     int current_key_compare = 0;
-
+    // 是否有效 current_ < restarts_
+    //和当前的_key作比较，判断是left还是right
     if (Valid()) {
       // If we're already scanning, use the current position as a starting
       // point. This is beneficial if the key we're seeking to is ahead of the
       // current position.
+      // 如果我们已开始扫描，则使用当前位置作为起点。
+      // 如果我们要查找的键位于当前位置之前，则此方法非常有用。
+      //  key_ <  target
       current_key_compare = Compare(key_, target);
       if (current_key_compare < 0) {
         // key_ is smaller than target
@@ -184,18 +195,29 @@ class Block::Iter : public Iterator {
       }
     }
 
+    //通过重启点进行二分查找
     while (left < right) {
+      //计算中间点
       uint32_t mid = (left + right + 1) / 2;
+      //查找到mid这个重启点的值
+      //偏移量 即region_offset 表示mid这个重启点在块中的偏移量
       uint32_t region_offset = GetRestartPoint(mid);
       uint32_t shared, non_shared, value_length;
+      //data_为块的内容，region_offset为重启点在块中的偏移量，DecodeEntry函数在该
+      //重启点数据中读取第一组键值对，shared表示键共享部分长度,non_shared表示键非
+      //共享部分长度，value_length表示值的长度。返回值key_ptr指向了键的非共享部分
       const char* key_ptr =
           DecodeEntry(data_ + region_offset, data_ + restarts_, &shared,
                       &non_shared, &value_length);
+      //重启点开始位置的键共享部分长度肯定为0,即shared=0
       if (key_ptr == nullptr || (shared != 0)) {
         CorruptionError();
         return;
       }
+      //mid_key 即mid这个重启点指向键值对的第一个键，因为shared肯定为0.所以将
+      //shared长度的部分赋值的mid_key即可
       Slice mid_key(key_ptr, non_shared);
+      //如果键小于查找值，则将left置为mid
       if (Compare(mid_key, target) < 0) {
         // Key at "mid" is smaller than "target".  Therefore all
         // blocks before "mid" are uninteresting.
@@ -203,6 +225,7 @@ class Block::Iter : public Iterator {
       } else {
         // Key at "mid" is >= "target".  Therefore all blocks at or
         // after "mid" are uninteresting.
+        //如果键大于等于查找值，则将right置为mid-1
         right = mid - 1;
       }
     }
@@ -210,9 +233,14 @@ class Block::Iter : public Iterator {
     // We might be able to use our current position within the restart block.
     // This is true if we determined the key we desire is in the current block
     // and is after than the current key.
+    // 我们可能能够在重启块中使用我们当前的位置。
+    // 如果我们确定我们想要的键位于当前块中
+    // 并且位于当前键之后，则此方法为真。
     assert(current_key_compare == 0 || Valid());
     bool skip_seek = left == restart_index_ && current_key_compare < 0;
     if (!skip_seek) {
+      //在块中线性查找，ParseNextKey会依次遍历每一个键值，然后将键和目标键target比较
+      //直到找到大于等于target的第一个键
       SeekToRestartPoint(left);
     }
     // Linear search (within restart block) for first key >= target
@@ -281,10 +309,12 @@ Iterator* Block::NewIterator(const Comparator* comparator) {
   if (size_ < sizeof(uint32_t)) {
     return NewErrorIterator(Status::Corruption("bad block contents"));
   }
+  //获得重启点个数
   const uint32_t num_restarts = NumRestarts();
   if (num_restarts == 0) {
     return NewEmptyIterator();
   } else {
+    //实际生成的是一个Iter实例
     return new Iter(comparator, data_, restart_offset_, num_restarts);
   }
 }

@@ -39,8 +39,8 @@ class BlockHandle {
   Status DecodeFrom(Slice* input);
 
  private:
-  uint64_t offset_;
-  uint64_t size_;
+  uint64_t offset_; //偏移量 编码为可变长度的64位整形 最多占用10个字节
+  uint64_t size_;   //大小，编码为可变长度的64位整形 最多占用10个字节
 };
 
 // Footer encapsulates the fixed information stored at the tail

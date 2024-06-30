@@ -14,7 +14,58 @@
 #include "table/format.h"
 #include "table/two_level_iterator.h"
 #include "util/coding.h"
-
+/**
+ * sstable文件
+ * 整体分为4部分
+ * 1. 数据区域（具体键值对）
+ *    a.块 （block_size 默认4KB）
+ *      1. 键值对（n)
+ *          a.数据结构
+ *           1.共享字节长度
+ *           2.非共享字节长度
+ *           3.值的长度
+ *           4.键的非共享部分数据长度
+ *           5.值数据
+ *          b.举例
+ *           1.k:db:redis,  redis
+ *              0,10,5,k:db:redis,redis
+ *              共享长度为0     （重启点  block_restart_interval 默认16 每16个键值对需要开启新重启点）
+ *           2.k:db:leveldb, leveldb
+ *              5,7,7,leveldb,leveldb
+ *              共享长度 (k:db:) 5
+ *              非共享长度 (leveldb) 7
+ *              值长度     （leveldb) 7
+ *              非共享键    （leveldb）
+ *              值          （leveldb）
+ *      2. 重启点数据 
+ *          a.重启点offset(n * 4字节)
+ *          b.重启点个数（4字节）
+ *      3. 压缩类型 （0x0 不压缩,0x1 snappy压缩）
+ *      4. 校验数据（crc4）
+ * 2. 元数据区域 （布隆过滤器）
+ *      a. 布隆过滤器 每2KB键值对会生成一个过滤器，保存在filter
+ *        1. 过滤器内容 （看成数组）
+ *        2. 过滤器的偏移量 （4 * n）
+ *        3. filter 内容大小（4字节）
+ *        4. filter base （1字节）11 表示2的11次幂=2KB
+ *        5. 块类型 type（1字节）不压缩 kNoCompression
+ *        6. 块校验 crc（4字节）
+ * 3. 索引区域 （数据索引和元数据索引）
+ *    a.索引的数据块
+ *      1. key 字符串 value是blockHandle  
+ *          a. key是 数据块前一个的最大key值 和后一个块的最小key值的最小分隔字符
+ *              1. 比如 abceg 和 abcqddh 取最短分隔字符  abcf
+*           b. value 数据块在sstable中偏移量和大小
+ * 4. 尾部  
+ *    （40字节(2个BlockHandle 每个最多20字节。不足40字节padding填满)  
+ *      + 8个字节固定魔数0xdb4775248b80fb57）
+ *  
+ *  读取sstable首先读取尾部
+ *  1. 确定文件是sstable 根据魔数
+ *  2. 确定数据和元数据索引区域 偏移量和大小
+ *   
+ * 
+ */
 namespace leveldb {
 
 struct Table::Rep {
@@ -41,14 +92,20 @@ Status Table::Open(const Options& options, RandomAccessFile* file,
   if (size < Footer::kEncodedLength) {
     return Status::Corruption("file is too short to be an sstable");
   }
-
+  //读取48个字符
   char footer_space[Footer::kEncodedLength];
   Slice footer_input;
+  //随机读文件 读取最后48个字节
+  //<meta index handle 最多20字节 可变64bit = （（64bit/（8-1） * 2 = 20）
+  //<index handle最多20字节> 
+  //<padding 不到40字节 填充满40字节> 
+  //<magic 8字节>
   Status s = file->Read(size - Footer::kEncodedLength, Footer::kEncodedLength,
                         &footer_input, footer_space);
   if (!s.ok()) return s;
 
   Footer footer;
+  //通过字符串解析成footer
   s = footer.DecodeFrom(&footer_input);
   if (!s.ok()) return s;
 
@@ -58,6 +115,8 @@ Status Table::Open(const Options& options, RandomAccessFile* file,
   if (options.paranoid_checks) {
     opt.verify_checksums = true;
   }
+  //读取block
+  //解析出来存放到index_block_contents 
   s = ReadBlock(file, opt, footer.index_handle(), &index_block_contents);
 
   if (s.ok()) {
@@ -91,15 +150,17 @@ void Table::ReadMeta(const Footer& footer) {
     opt.verify_checksums = true;
   }
   BlockContents contents;
+  //解析meta_index
   if (!ReadBlock(rep_->file, opt, footer.metaindex_handle(), &contents).ok()) {
     // Do not propagate errors since meta info is not needed for operation
     return;
   }
   Block* meta = new Block(contents);
-
+  //block迭代器
   Iterator* iter = meta->NewIterator(BytewiseComparator());
   std::string key = "filter.";
   key.append(rep_->options.filter_policy->Name());
+  //key 获得filter.{过滤内容}
   iter->Seek(key);
   if (iter->Valid() && iter->key() == Slice(key)) {
     ReadFilter(iter->value());
@@ -122,6 +183,7 @@ void Table::ReadFilter(const Slice& filter_handle_value) {
     opt.verify_checksums = true;
   }
   BlockContents block;
+  //读取filter
   if (!ReadBlock(rep_->file, opt, filter_handle, &block).ok()) {
     return;
   }
@@ -150,8 +212,13 @@ static void ReleaseBlock(void* arg, void* h) {
 
 // Convert an index iterator value (i.e., an encoded BlockHandle)
 // into an iterator over the contents of the corresponding block.
+// 读取block reader
 Iterator* Table::BlockReader(void* arg, const ReadOptions& options,
                              const Slice& index_value) {
+  //arg参数为一个Table结构，options为读取时的参数结构，index_value为通过
+  //第一层迭代器读取到的值，该值为一个BlockHandle,BlockHandle中的偏移量指向要
+  //查找的块在SSTable中的偏移量,BlockHandle中的大小表明要查找的块的大小
+  //将arg变量转换为一个Table结构
   Table* table = reinterpret_cast<Table*>(arg);
   Cache* block_cache = table->rep_->options.block_cache;
   Block* block = nullptr;
@@ -159,23 +226,30 @@ Iterator* Table::BlockReader(void* arg, const ReadOptions& options,
 
   BlockHandle handle;
   Slice input = index_value;
+  //将index_value解码到BlockHandle类型的变量handle中
   Status s = handle.DecodeFrom(&input);
   // We intentionally allow extra stuff in index_value so that we
   // can add more features in the future.
 
   if (s.ok()) {
+    //contents中保存一个块的内容
     BlockContents contents;
     if (block_cache != nullptr) {
       char cache_key_buffer[16];
       EncodeFixed64(cache_key_buffer, table->rep_->cache_id);
       EncodeFixed64(cache_key_buffer + 8, handle.offset());
+      //创建key
       Slice key(cache_key_buffer, sizeof(cache_key_buffer));
+      //block_cache内寻找key 获得Cache
       cache_handle = block_cache->Lookup(key);
       if (cache_handle != nullptr) {
         block = reinterpret_cast<Block*>(block_cache->Value(cache_handle));
       } else {
+        //在SSTable文件中，通过BlockHandle变量handle所指向的偏移量以及大小读取
+        //一个块的内容到contents变量
         s = ReadBlock(table->rep_->file, options, handle, &contents);
         if (s.ok()) {
+          //生成一个block结构
           block = new Block(contents);
           if (contents.cachable && options.fill_cache) {
             cache_handle = block_cache->Insert(key, block, block->size(),
@@ -193,6 +267,7 @@ Iterator* Table::BlockReader(void* arg, const ReadOptions& options,
 
   Iterator* iter;
   if (block != nullptr) {
+    //生成一个block的迭代器 通过该迭代器读取数据
     iter = block->NewIterator(table->rep_->options.comparator);
     if (cache_handle == nullptr) {
       iter->RegisterCleanup(&DeleteBlock, block, nullptr);
@@ -207,7 +282,9 @@ Iterator* Table::BlockReader(void* arg, const ReadOptions& options,
 
 Iterator* Table::NewIterator(const ReadOptions& options) const {
   return NewTwoLevelIterator(
+      //第一层迭代器，为一个块迭代器
       rep_->index_block->NewIterator(rep_->options.comparator),
+      //第二层迭代器，也是一个块迭代器
       &Table::BlockReader, const_cast<Table*>(this), options);
 }
 

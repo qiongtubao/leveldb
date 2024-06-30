@@ -123,7 +123,9 @@ class StringSource : public RandomAccessFile {
     if (offset + n > contents_.size()) {
       n = contents_.size() - offset;
     }
+    //数据拷贝到scratch
     std::memcpy(scratch, &contents_[offset], n);
+    //使用scratch 创建Slice
     *result = Slice(scratch, n);
     return Status::OK();
   }
