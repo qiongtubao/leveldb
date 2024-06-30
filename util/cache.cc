@@ -41,17 +41,17 @@ namespace {
 // An entry is a variable length heap-allocated structure.  Entries
 // are kept in a circular doubly linked list ordered by access time.
 struct LRUHandle {
-  void* value;
-  void (*deleter)(const Slice&, void* value);
-  LRUHandle* next_hash;
-  LRUHandle* next;
-  LRUHandle* prev;
-  size_t charge;  // TODO(opt): Only allow uint32_t?
-  size_t key_length;
-  bool in_cache;     // Whether entry is in the cache.
-  uint32_t refs;     // References, including cache reference, if present.
-  uint32_t hash;     // Hash of key(); used for fast sharding and comparisons
-  char key_data[1];  // Beginning of key
+  void* value;    //节点中保存的值
+  void (*deleter)(const Slice&, void* value); //节点的销毁方法
+  LRUHandle* next_hash; //如果产生哈希冲突，则用一个单向链表串联冲突的节点
+  LRUHandle* next;  //LRU双向链表的后一个节点
+  LRUHandle* prev;  //LRU双向链表的前一个节点
+  size_t charge;  // TODO(opt): Only allow uint32_t? 当前节点占用的容量 leveldb中每个节点容量为1
+  size_t key_length;  //节点中的键的长度
+  bool in_cache;     // Whether entry is in the cache.   该节点是否在缓存中，如果不在，则可以调用节点的销毁方法进行销毁
+  uint32_t refs;     // References, including cache reference, if present. //该节点引用计数
+  uint32_t hash;     // Hash of key(); used for fast sharding and comparisons //该节点的hash值
+  char key_data[1];  // Beginning of key  //该节点键的占位符 键的实际长度保存在key_length
 
   Slice key() const {
     // next_ is only equal to this if the LRU handle is the list head of an
@@ -154,15 +154,21 @@ class LRUCache {
   ~LRUCache();
 
   // Separate from constructor so caller can easily make an array of LRUCache
+  //设置LRU Cache的容量大小
   void SetCapacity(size_t capacity) { capacity_ = capacity; }
 
   // Like Cache methods, but with an extra "hash" parameter.
+  //插入节点
   Cache::Handle* Insert(const Slice& key, uint32_t hash, void* value,
                         size_t charge,
                         void (*deleter)(const Slice& key, void* value));
+  //查找节点
   Cache::Handle* Lookup(const Slice& key, uint32_t hash);
+  //释放一个节点引用
   void Release(Cache::Handle* handle);
+  //移除一个节点
   void Erase(const Slice& key, uint32_t hash);
+  //所有节点移除
   void Prune();
   size_t TotalCharge() const {
     MutexLock l(&mutex_);
@@ -170,28 +176,30 @@ class LRUCache {
   }
 
  private:
-  void LRU_Remove(LRUHandle* e);
-  void LRU_Append(LRUHandle* list, LRUHandle* e);
-  void Ref(LRUHandle* e);
-  void Unref(LRUHandle* e);
-  bool FinishErase(LRUHandle* e) EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  void LRU_Remove(LRUHandle* e); //将一个节点从双向链表中移除
+  void LRU_Append(LRUHandle* list, LRUHandle* e); //将一个节点插入到list参数指定的双向链表
+  void Ref(LRUHandle* e);  //对一个节点的引用计数 +1
+  void Unref(LRUHandle* e); //对一个节点的引用计数-1
+  bool FinishErase(LRUHandle* e) EXCLUSIVE_LOCKS_REQUIRED(mutex_);  
 
   // Initialized before use.
-  size_t capacity_;
+  size_t capacity_; //哈希表容量大小
 
   // mutex_ protects the following state.
   mutable port::Mutex mutex_;
-  size_t usage_ GUARDED_BY(mutex_);
+  size_t usage_ GUARDED_BY(mutex_); 
 
   // Dummy head of LRU list.
   // lru.prev is newest entry, lru.next is oldest entry.
   // Entries have refs==1 and in_cache==true.
+  // lru_.prev指向最新的节点 lru.next 指向最旧的节点如果一个节点的引用计数refs等于1并且未被移除，即节点的变量in_cache为true则将该节点放到lru_双向链表中
   LRUHandle lru_ GUARDED_BY(mutex_);
 
   // Dummy head of in-use list.
   // Entries are in use by clients, and have refs >= 2 and in_cache==true.
+  //in_use_双向链表中的节点引用计数refs都大于等于2并且肯定未被移除，即节点的in_cache为true
   LRUHandle in_use_ GUARDED_BY(mutex_);
-
+  //实际使用的哈希表，LRU Cache对哈希的操作都会通过底层的table_变量来操作
   HandleTable table_ GUARDED_BY(mutex_);
 };
 
@@ -217,6 +225,7 @@ LRUCache::~LRUCache() {
 
 void LRUCache::Ref(LRUHandle* e) {
   if (e->refs == 1 && e->in_cache) {  // If on lru_ list, move to in_use_ list.
+    //从lru_移到in_use_
     LRU_Remove(e);
     LRU_Append(&in_use_, e);
   }
@@ -227,11 +236,13 @@ void LRUCache::Unref(LRUHandle* e) {
   assert(e->refs > 0);
   e->refs--;
   if (e->refs == 0) {  // Deallocate.
+    //释放
     assert(!e->in_cache);
     (*e->deleter)(e->key(), e->value);
     free(e);
   } else if (e->in_cache && e->refs == 1) {
     // No longer in use; move to lru_ list.
+    //从in_use_移到lru_
     LRU_Remove(e);
     LRU_Append(&lru_, e);
   }
@@ -269,11 +280,11 @@ Cache::Handle* LRUCache::Insert(const Slice& key, uint32_t hash, void* value,
                                 void (*deleter)(const Slice& key,
                                                 void* value)) {
   MutexLock l(&mutex_);
-
+  //申请新实例
   LRUHandle* e =
       reinterpret_cast<LRUHandle*>(malloc(sizeof(LRUHandle) - 1 + key.size()));
   e->value = value;
-  e->deleter = deleter;
+  e->deleter = deleter; //释放key和value的函数
   e->charge = charge;
   e->key_length = key.size();
   e->hash = hash;
@@ -291,9 +302,11 @@ Cache::Handle* LRUCache::Insert(const Slice& key, uint32_t hash, void* value,
     // next is read by key() in an assert, so it must be initialized
     e->next = nullptr;
   }
+  //根据使用量大于总容量的时候，且lru上有节点的话 就进行淘汰
   while (usage_ > capacity_ && lru_.next != &lru_) {
     LRUHandle* old = lru_.next;
     assert(old->refs == 1);
+    //调用FinishErase方法进行淘汰处理
     bool erased = FinishErase(table_.Remove(old->key(), old->hash));
     if (!erased) {  // to avoid unused variable when compiled NDEBUG
       assert(erased);
@@ -308,9 +321,13 @@ Cache::Handle* LRUCache::Insert(const Slice& key, uint32_t hash, void* value,
 bool LRUCache::FinishErase(LRUHandle* e) {
   if (e != nullptr) {
     assert(e->in_cache);
+    //移除lru
     LRU_Remove(e);
+    //将节点in_cache置为false
     e->in_cache = false;
+    //修改容量大小
     usage_ -= e->charge;
+    //引用减1
     Unref(e);
   }
   return e != nullptr;
@@ -334,18 +351,21 @@ void LRUCache::Prune() {
 }
 
 static const int kNumShardBits = 4;
+//LRU Cache共分为16个相同的段
 static const int kNumShards = 1 << kNumShardBits;
 
 class ShardedLRUCache : public Cache {
  private:
+  //数组16个元素LRUCache
   LRUCache shard_[kNumShards];
   port::Mutex id_mutex_;
   uint64_t last_id_;
 
+  //对一个需要查找的字符串进行哈希
   static inline uint32_t HashSlice(const Slice& s) {
     return Hash(s.data(), s.size(), 0);
   }
-
+  //将哈希得到的值右移28位 即取哈希值的高4位 因此通过shard函数处理后的值小于16
   static uint32_t Shard(uint32_t hash) { return hash >> (32 - kNumShardBits); }
 
  public:

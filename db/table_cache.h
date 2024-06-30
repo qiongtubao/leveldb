@@ -49,7 +49,7 @@ class TableCache {
   Env* const env_;
   const std::string dbname_;
   const Options& options_;
-  Cache* cache_;
+  Cache* cache_;  //这里会创建一个ShardedLRUCache
 };
 
 }  // namespace leveldb

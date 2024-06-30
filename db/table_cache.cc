@@ -37,30 +37,39 @@ TableCache::TableCache(const std::string& dbname, const Options& options,
       cache_(NewLRUCache(entries)) {}
 
 TableCache::~TableCache() { delete cache_; }
-
+//通过文件序号作为key 在cache_中查找是否存在该键
+//如果不存在就打开一个SSTable 经过处理后插入到cache_中
 Status TableCache::FindTable(uint64_t file_number, uint64_t file_size,
                              Cache::Handle** handle) {
   Status s;
   char buf[sizeof(file_number)];
+  //转换成字符串
   EncodeFixed64(buf, file_number);
+  //构建key
   Slice key(buf, sizeof(buf));
+  //cache里查找
   *handle = cache_->Lookup(key);
   if (*handle == nullptr) {
+    //创建一个sstable名字
     std::string fname = TableFileName(dbname_, file_number);
     RandomAccessFile* file = nullptr;
     Table* table = nullptr;
+    //创建sstable 随机读文件
     s = env_->NewRandomAccessFile(fname, &file);
     if (!s.ok()) {
+      //兼容老版本
       std::string old_fname = SSTTableFileName(dbname_, file_number);
       if (env_->NewRandomAccessFile(old_fname, &file).ok()) {
         s = Status::OK();
       }
     }
     if (s.ok()) {
+      //打开sstable文件并且生成一个table实例 保存在table里
       s = Table::Open(options_, file, file_size, &table);
     }
 
     if (!s.ok()) {
+      //打开失败的错误处理
       assert(table == nullptr);
       delete file;
       // We do not cache error results so that if the error is transient,
@@ -69,6 +78,7 @@ Status TableCache::FindTable(uint64_t file_number, uint64_t file_size,
       TableAndFile* tf = new TableAndFile;
       tf->file = file;
       tf->table = table;
+      //以文件序号为键，TableAndFile为值插入缓存
       *handle = cache_->Insert(key, tf, 1, &DeleteEntry);
     }
   }
