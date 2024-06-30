@@ -27,6 +27,7 @@ class FilterPolicy;
 //
 // The sequence of calls to FilterBlockBuilder must match the regexp:
 //      (StartBlock AddKey*)* Finish
+//SSTable中保存
 class FilterBlockBuilder {
  public:
   explicit FilterBlockBuilder(const FilterPolicy*);
@@ -42,13 +43,13 @@ class FilterBlockBuilder {
   void GenerateFilter();
 
   const FilterPolicy* policy_;
-  std::string keys_;             // Flattened key contents
-  std::vector<size_t> start_;    // Starting index in keys_ of each key
-  std::string result_;           // Filter data computed so far
-  std::vector<Slice> tmp_keys_;  // policy_->CreateFilter() argument
-  std::vector<uint32_t> filter_offsets_;
+  std::string keys_;             // Flattened key contents   生成布隆过滤器的键 比如有3个键  level,level1,level2 那么keys_为levellevel1level2
+  std::vector<size_t> start_;    // Starting index in keys_ of each key 数组类型，保存keys_每个key的开始索引 比如上面的0,5,11
+  std::string result_;           // Filter data computed so far   生成布隆过滤器内容
+  std::vector<Slice> tmp_keys_;  // policy_->CreateFilter() argument 生成布隆过滤器的时候会把keys_ 分割
+  std::vector<uint32_t> filter_offsets_; //过滤器偏移量 在元数据块中的偏移量
 };
-
+//SSTable中读取
 class FilterBlockReader {
  public:
   // REQUIRES: "contents" and *policy must stay live while *this is live.
@@ -56,11 +57,11 @@ class FilterBlockReader {
   bool KeyMayMatch(uint64_t block_offset, const Slice& key);
 
  private:
-  const FilterPolicy* policy_;
-  const char* data_;    // Pointer to filter data (at block-start)
-  const char* offset_;  // Pointer to beginning of offset array (at block-end)
-  size_t num_;          // Number of entries in offset array
-  size_t base_lg_;      // Encoding parameter (see kFilterBaseLg in .cc file)
+  const FilterPolicy* policy_;   //布隆过滤器中为BloomFilterPolicy
+  const char* data_;    // Pointer to filter data (at block-start)  元数据的开始位置
+  const char* offset_;  // Pointer to beginning of offset array (at block-end)  偏移量
+  size_t num_;          // Number of entries in offset array  过滤器的偏移量个数
+  size_t base_lg_;      // Encoding parameter (see kFilterBaseLg in .cc file) 过滤器的基数
 };
 
 }  // namespace leveldb

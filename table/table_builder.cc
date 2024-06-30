@@ -158,6 +158,7 @@ void TableBuilder::Flush() {
     r->status = r->file->Flush();
   }
   if (r->filter_block != nullptr) {
+    //布隆过滤器保存
     r->filter_block->StartBlock(r->offset);
   }
 }
@@ -247,6 +248,7 @@ Status TableBuilder::Finish() {
   if (ok()) {
     BlockBuilder meta_index_block(&r->options);
     if (r->filter_block != nullptr) {
+      //添加到布隆过滤器
       // Add mapping from "filter.Name" to location of filter data
       //元数据索引块的key为"filter."加上配置的过滤器名称,默认为
       //filter.leveldb.BuiltinBloomFilter2

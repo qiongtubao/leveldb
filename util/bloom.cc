@@ -18,21 +18,25 @@ class BloomFilterPolicy : public FilterPolicy {
  public:
   explicit BloomFilterPolicy(int bits_per_key) : bits_per_key_(bits_per_key) {
     // We intentionally round down to reduce probing cost a little bit
+    //通过公式k = m/n * (ln(2)) 最小误报率k， 存储空间大小m, 元素总个数n
     k_ = static_cast<size_t>(bits_per_key * 0.69);  // 0.69 =~ ln(2)
-    if (k_ < 1) k_ = 1;
-    if (k_ > 30) k_ = 30;
+    if (k_ < 1) k_ = 1;  //最小1
+    if (k_ > 30) k_ = 30;//最大30
   }
 
   const char* Name() const override { return "leveldb.BuiltinBloomFilter2"; }
 
   void CreateFilter(const Slice* keys, int n, std::string* dst) const override {
     // Compute bloom filter size (in both bits and bytes)
+    // 计算需要的位数
     size_t bits = n * bits_per_key_;
 
     // For small n, we can see a very high false positive rate.  Fix it
     // by enforcing a minimum bloom filter length.
+    // 对于较小的 n，我们可以看到非常高的误报率。通过强制执行最小布隆过滤器长度来修复它。
     if (bits < 64) bits = 64;
 
+    //1字节存放k_ （含义需要进行几次hash）
     size_t bytes = (bits + 7) / 8;
     bits = bytes * 8;
 
@@ -43,7 +47,9 @@ class BloomFilterPolicy : public FilterPolicy {
     for (int i = 0; i < n; i++) {
       // Use double-hashing to generate a sequence of hash values.
       // See analysis in [Kirsch,Mitzenmacher 2006].
+      //计算一次hash
       uint32_t h = BloomHash(keys[i]);
+      //理论上是要进行k_次 hash 但是这里用hash值+delta值来取代
       const uint32_t delta = (h >> 17) | (h << 15);  // Rotate right 17 bits
       for (size_t j = 0; j < k_; j++) {
         const uint32_t bitpos = h % bits;
@@ -54,6 +60,7 @@ class BloomFilterPolicy : public FilterPolicy {
   }
 
   bool KeyMayMatch(const Slice& key, const Slice& bloom_filter) const override {
+    //至少2字节   1字节保存k_
     const size_t len = bloom_filter.size();
     if (len < 2) return false;
 
@@ -66,11 +73,13 @@ class BloomFilterPolicy : public FilterPolicy {
     if (k > 30) {
       // Reserved for potentially new encodings for short bloom filters.
       // Consider it a match.
+      //新协议不允许超过30  超过30就默认是存在的 （过滤器无效）
       return true;
     }
 
     uint32_t h = BloomHash(key);
     const uint32_t delta = (h >> 17) | (h << 15);  // Rotate right 17 bits
+    //理论上是要进行k_次 hash 但是这里用hash值+delta值来取代
     for (size_t j = 0; j < k; j++) {
       const uint32_t bitpos = h % bits;
       if ((array[bitpos / 8] & (1 << (bitpos % 8))) == 0) return false;
