@@ -1289,15 +1289,18 @@ Compaction* VersionSet::PickCompaction() {
   // the compactions triggered by seeks.
   const bool size_compaction = (current_->compaction_score_ >= 1);
   const bool seek_compaction = (current_->file_to_compact_ != nullptr);
+  //优先size_compaction
   if (size_compaction) {
     level = current_->compaction_level_;
     assert(level >= 0);
     assert(level + 1 < config::kNumLevels);
+    //创建Compaction对象
     c = new Compaction(options_, level);
 
     // Pick the first file that comes after compact_pointer_[level]
     for (size_t i = 0; i < current_->files_[level].size(); i++) {
       FileMetaData* f = current_->files_[level][i];
+      //找比上一次compact_pointer_记录的key要大的文件
       if (compact_pointer_[level].empty() ||
           icmp_.Compare(f->largest.Encode(), compact_pointer_[level]) > 0) {
         c->inputs_[0].push_back(f);
@@ -1305,6 +1308,7 @@ Compaction* VersionSet::PickCompaction() {
       }
     }
     if (c->inputs_[0].empty()) {
+      //没找到从头开始合并
       // Wrap-around to the beginning of the key space
       c->inputs_[0].push_back(current_->files_[level][0]);
     }
@@ -1315,21 +1319,34 @@ Compaction* VersionSet::PickCompaction() {
   } else {
     return nullptr;
   }
-
+  //将compaction实例的input_version设置为当前版本
   c->input_version_ = current_;
+  //操作版本加1次引用计数
   c->input_version_->Ref();
 
   // Files in level 0 may overlap each other, so pick up all overlapping ones
+  // 级别 0 中的文件可能相互重叠，因此拾取所有重叠的文件
+  //level0 特殊处理
   if (level == 0) {
     InternalKey smallest, largest;
+    //取出文件中的最小和最大key
     GetRange(c->inputs_[0], &smallest, &largest);
     // Note that the next call will discard the file we placed in
     // c->inputs_[0] earlier and replace it with an overlapping set
     // which will include the picked file.
+    // Level0 将所有smallest到largest范围的文件放入inputs[0]
+    //举例
+    // level0 有4个文件 f1[c,e]，f2[a,f]，f3[a,b]，f4[i,z]
+    // 选中的是f1[c,e]
+    // 开始遍历其他文件  f2和f1有重叠，范围扩大到[a,f]
+    // 然后重新遍历  发现f3和[a,f]有重叠 依然是[a,f]
+    // 最后选中的是 f1,f2,f3
+    //为什么要扩大范围
+    //比如我在f2里面写入c=10，然后f1里删除c 如果只合并f1的话  查询的时候会先查询level0层 找到了f2中c=10这样就错了
     current_->GetOverlappingInputs(0, &smallest, &largest, &c->inputs_[0]);
     assert(!c->inputs_[0].empty());
   }
-
+  //选取level n+1需要参与的文件放到Inputs_[1]
   SetupOtherInputs(c);
 
   return c;
@@ -1415,15 +1432,18 @@ void AddBoundaryInputs(const InternalKeyComparator& icmp,
 }
 
 void VersionSet::SetupOtherInputs(Compaction* c) {
+  //层级
   const int level = c->level();
   InternalKey smallest, largest;
-
   AddBoundaryInputs(icmp_, current_->files_[level], &c->inputs_[0]);
+  //获得最小key和最大key
   GetRange(c->inputs_[0], &smallest, &largest);
 
+  //从level + 1层查找包含最小和最大值的文件赋给inputs_[1]
   current_->GetOverlappingInputs(level + 1, &smallest, &largest,
                                  &c->inputs_[1]);
 
+  //合并所有 获得最大键和最小键
   // Get entire range covered by compaction
   InternalKey all_start, all_limit;
   GetRange2(c->inputs_[0], c->inputs_[1], &all_start, &all_limit);
@@ -1431,6 +1451,8 @@ void VersionSet::SetupOtherInputs(Compaction* c) {
   // See if we can grow the number of inputs in "level" without
   // changing the number of "level+1" files we pick up.
   if (!c->inputs_[1].empty()) {
+    //逻辑是通过level n+1 文件的最小key和最大key 反向重新选level n层的compaction文件 
+    //如果总文件大小不超过50MB就使用新的level n的compaction文件
     std::vector<FileMetaData*> expanded0;
     current_->GetOverlappingInputs(level, &all_start, &all_limit, &expanded0);
     AddBoundaryInputs(icmp_, current_->files_[level], &expanded0);
@@ -1462,6 +1484,8 @@ void VersionSet::SetupOtherInputs(Compaction* c) {
 
   // Compute the set of grandparent files that overlap this compaction
   // (parent == level+1; grandparent == level+2)
+  // 计算与此压缩重叠的祖父母文件集
+  // (parent == level+1; grandparent == level+2)
   if (level + 2 < config::kNumLevels) {
     current_->GetOverlappingInputs(level + 2, &all_start, &all_limit,
                                    &c->grandparents_);
@@ -1471,6 +1495,7 @@ void VersionSet::SetupOtherInputs(Compaction* c) {
   // We update this immediately instead of waiting for the VersionEdit
   // to be applied so that if the compaction fails, we will try a different
   // key range next time.
+  //记录本次合并最大key 
   compact_pointer_[level] = largest.Encode().ToString();
   c->edit_.SetCompactPointer(level, largest);
 }

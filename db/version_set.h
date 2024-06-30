@@ -367,13 +367,15 @@ class Compaction {
 
   Compaction(const Options* options, int level);
 
-  int level_;
-  uint64_t max_output_file_size_;
-  Version* input_version_;
-  VersionEdit edit_;
+  int level_;                     //compaction操作等级
+  uint64_t max_output_file_size_; 
+  Version* input_version_;        //进行本次compaction操作的当前版本
+  VersionEdit edit_;              //保存本次compaction操作后的相关文件信息
 
   // Each compaction reads inputs from "level_" and "level_+1"
-  std::vector<FileMetaData*> inputs_[2];  // The two sets of inputs
+  //intputs[0]是level n层参与的文件 
+  //inputs_[1]是level n+1层参与的文件
+  std::vector<FileMetaData*> inputs_[2];  // The two sets of inputs 
 
   // State used to check for number of overlapping grandparent files
   // (parent == level_ + 1, grandparent == level_ + 2)
