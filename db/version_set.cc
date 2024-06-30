@@ -402,7 +402,8 @@ Status Version::Get(const ReadOptions& options, const LookupKey& k,
 bool Version::UpdateStats(const GetStats& stats) {
   FileMetaData* f = stats.seek_file;
   if (f != nullptr) {
-    f->allowed_seeks--;
+    f->allowed_seeks--; //无效查找文件允许次数--
+    //如果文件允许的allowed_seeks次数小于等于0 并且file_to_compact还没赋值就将其赋值
     if (f->allowed_seeks <= 0 && file_to_compact_ == nullptr) {
       file_to_compact_ = f;
       file_to_compact_level_ = stats.seek_file_level;
@@ -660,6 +661,17 @@ class VersionSet::Builder {
       // same as the compaction of 40KB of data.  We are a little
       // conservative and allow approximately one seek for every 16KB
       // of data before triggering a compaction.
+      // 我们安排在一定数量的寻道之后自动压缩此文件。我们假设：
+      // (1) 一次寻道花费 10ms
+      // (2) 写入或读取 1MB 花费 10ms（100MB/s）
+      // (3) 压缩 1MB 需要 25MB 的 IO：
+      // 从此级别读取 1MB
+      // 从下一级别读取 10-12MB（边界可能未对齐）
+      // 向下一级别写入 10-12MB
+      // 这意味着 25 次寻道的成本与压缩 1MB 数据的成本相同。即，一次寻道的成本大约与压缩 40KB 数据的成本相同。
+      // 我们有点保守，在触发压缩之前，大约每 16KB 数据进行一次寻道。
+      
+      // 文件大小/16k 是允许失败的次数 
       f->allowed_seeks = static_cast<int>((f->file_size / 16384U));
       if (f->allowed_seeks < 100) f->allowed_seeks = 100;
 
@@ -774,6 +786,11 @@ void VersionSet::AppendVersion(Version* v) {
   v->next_->prev_ = v;
 }
 
+//操作完compaction后执行
+//1.将当前版本根据版本变化进行处理
+//2.版本变化写入manifest文件
+//3.执行VersionSet中的Finalize方法 （新版本compaction_socre_和compaction_level_赋值）
+//4.新版本挂载到VersionSet双向链表中 current_设置为最新的
 Status VersionSet::LogAndApply(VersionEdit* edit, port::Mutex* mu) {
   if (edit->has_log_number_) {
     assert(edit->log_number_ >= log_number_);
@@ -859,6 +876,8 @@ Status VersionSet::LogAndApply(VersionEdit* edit, port::Mutex* mu) {
   return s;
 }
 
+//根据menifest文件记录的每个版本变化 逐次回放生成一个最新的版本
+//恢复
 Status VersionSet::Recover(bool* save_manifest) {
   struct LogReporter : public log::Reader::Reporter {
     Status* status;
@@ -866,9 +885,10 @@ Status VersionSet::Recover(bool* save_manifest) {
       if (this->status->ok()) *this->status = s;
     }
   };
-
+  //先去读取CURRENT 文件拿到manifest file 
   // Read "CURRENT" file, which contains a pointer to the current manifest file
   std::string current;
+  //读取CURRENT文件内容
   Status s = ReadFileToString(env_, CurrentFileName(dbname_), &current);
   if (!s.ok()) {
     return s;
@@ -876,10 +896,12 @@ Status VersionSet::Recover(bool* save_manifest) {
   if (current.empty() || current[current.size() - 1] != '\n') {
     return Status::Corruption("CURRENT file does not end with newline");
   }
+  //去掉\n
   current.resize(current.size() - 1);
-
+  //manifest文件
   std::string dscname = dbname_ + "/" + current;
   SequentialFile* file;
+  //顺序读文件
   s = env_->NewSequentialFile(dscname, &file);
   if (!s.ok()) {
     if (s.IsNotFound()) {
@@ -907,6 +929,7 @@ Status VersionSet::Recover(bool* save_manifest) {
                        0 /*initial_offset*/);
     Slice record;
     std::string scratch;
+    //一个个versionEdit对象 一直迭代恢复到最后一个
     while (reader.ReadRecord(&record, &scratch) && s.ok()) {
       ++read_records;
       VersionEdit edit;
@@ -1029,6 +1052,8 @@ void VersionSet::MarkFileNumberUsed(uint64_t number) {
   }
 }
 
+//1. level0 文件个数>4就要compaction  即 compaction_score_ = 文件个数/4
+//2. level1 - level5                compaction_score_ = 文件总大小/该层文件允许的最大大小
 void VersionSet::Finalize(Version* v) {
   // Precomputed best level for next compaction
   int best_level = -1;
@@ -1048,6 +1073,11 @@ void VersionSet::Finalize(Version* v) {
       // file size is small (perhaps because of a small write-buffer
       // setting, or very high compression ratios, or lots of
       // overwrites/deletions).
+      // 我们通过限制文件数量而不是字节数来特殊处理级别 0，原因有二：
+      //
+      // (1) 如果写入缓冲区较大，最好不要进行太多级别 0 压缩。
+      //
+      // (2) 每次读取时都会合并级别 0 中的文件，因此我们希望在单个文件较小时避免文件过多（可能是因为写入缓冲区设置较小，或者压缩率非常高，或者有很多覆盖/删除）。
       score = v->files_[level].size() /
               static_cast<double>(config::kL0_CompactionTrigger);
     } else {
@@ -1058,11 +1088,12 @@ void VersionSet::Finalize(Version* v) {
     }
 
     if (score > best_score) {
+      //取一个分数最高的
       best_level = level;
       best_score = score;
     }
   }
-
+  //分数最高的层级记录下来 当compaction_score_ >1的时候就进行compaction
   v->compaction_level_ = best_level;
   v->compaction_score_ = best_score;
 }

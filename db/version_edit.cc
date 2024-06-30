@@ -11,16 +11,17 @@ namespace leveldb {
 
 // Tag numbers for serialized VersionEdit.  These numbers are written to
 // disk and should not be changed.
+//VersionEdit 成员变量设置标记
 enum Tag {
-  kComparator = 1,
-  kLogNumber = 2,
-  kNextFileNumber = 3,
-  kLastSequence = 4,
-  kCompactPointer = 5,
-  kDeletedFile = 6,
-  kNewFile = 7,
+  kComparator = 1,  //比较器
+  kLogNumber = 2,   //日志文件序列号
+  kNextFileNumber = 3,  //下一个文件序列号
+  kLastSequence = 4,    //下一个写入序列号
+  kCompactPointer = 5,  //CompactPoint类型
+  kDeletedFile = 6,     //删除文件
+  kNewFile = 7,       //增加的文件
   // 8 was used for large value refs
-  kPrevLogNumber = 9
+  kPrevLogNumber = 9  //前一个日志文件序列号
 };
 
 void VersionEdit::Clear() {
@@ -40,6 +41,7 @@ void VersionEdit::Clear() {
 
 void VersionEdit::EncodeTo(std::string* dst) const {
   if (has_comparator_) {
+    //可变长度的32位整型（只占一个字节）
     PutVarint32(dst, kComparator);
     PutLengthPrefixedSlice(dst, comparator_);
   }
@@ -60,25 +62,37 @@ void VersionEdit::EncodeTo(std::string* dst) const {
     PutVarint64(dst, last_sequence_);
   }
 
+  //上次compaction 最大键保存
   for (size_t i = 0; i < compact_pointers_.size(); i++) {
     PutVarint32(dst, kCompactPointer);
+    //层级
     PutVarint32(dst, compact_pointers_[i].first);  // level
+    //上次compaction操作的最大键编码
     PutLengthPrefixedSlice(dst, compact_pointers_[i].second.Encode());
   }
 
+  //删除文件
   for (const auto& deleted_file_kvp : deleted_files_) {
     PutVarint32(dst, kDeletedFile);
+    //层级
     PutVarint32(dst, deleted_file_kvp.first);   // level
+    //文件序列号
     PutVarint64(dst, deleted_file_kvp.second);  // file number
   }
 
+  //新加文件名
   for (size_t i = 0; i < new_files_.size(); i++) {
     const FileMetaData& f = new_files_[i].second;
     PutVarint32(dst, kNewFile);
+    //层级
     PutVarint32(dst, new_files_[i].first);  // level
+    //序列号
     PutVarint64(dst, f.number);
+    //文件大小
     PutVarint64(dst, f.file_size);
+    //最小键
     PutLengthPrefixedSlice(dst, f.smallest.Encode());
+    //最大键
     PutLengthPrefixedSlice(dst, f.largest.Encode());
   }
 }
